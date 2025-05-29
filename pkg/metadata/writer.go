@@ -26,8 +26,8 @@ func NewWriter() (*Writer, error) {
 	}, nil
 }
 
-// WriteMetadata writes title and description to image metadata
-func (w *Writer) WriteMetadata(imagePath, title, description string) error {
+// WriteMetadata writes title, description, and keywords to image metadata
+func (w *Writer) WriteMetadata(imagePath, title, description string, keywords []string) error {
 	// Build exiftool command arguments
 	args := []string{
 		"-overwrite_original", // Don't create backup files
@@ -51,6 +51,17 @@ func (w *Writer) WriteMetadata(imagePath, title, description string) error {
 		)
 	}
 	
+	if len(keywords) > 0 {
+		// Write keywords/tags to multiple fields
+		// Flickr reads these as tags
+		keywordList := strings.Join(keywords, ", ")
+		args = append(args,
+			fmt.Sprintf("-Keywords=%s", keywordList),
+			fmt.Sprintf("-XMP:Subject=%s", keywordList),
+			fmt.Sprintf("-IPTC:Keywords=%s", keywordList),
+		)
+	}
+	
 	// Add the file path
 	args = append(args, imagePath)
 	
@@ -65,7 +76,7 @@ func (w *Writer) WriteMetadata(imagePath, title, description string) error {
 }
 
 // CopyWithMetadata creates a temporary copy of the image with metadata
-func (w *Writer) CopyWithMetadata(imagePath, title, description string) (string, error) {
+func (w *Writer) CopyWithMetadata(imagePath, title, description string, keywords []string) (string, error) {
 	// Create temp file with same extension
 	ext := filepath.Ext(imagePath)
 	tempFile, err := os.CreateTemp("", fmt.Sprintf("imgup-*%s", ext))
@@ -87,7 +98,7 @@ func (w *Writer) CopyWithMetadata(imagePath, title, description string) (string,
 	}
 	
 	// Write metadata to the copy
-	if err := w.WriteMetadata(tempFile.Name(), title, description); err != nil {
+	if err := w.WriteMetadata(tempFile.Name(), title, description, keywords); err != nil {
 		os.Remove(tempFile.Name())
 		return "", fmt.Errorf("failed to write metadata: %w", err)
 	}
