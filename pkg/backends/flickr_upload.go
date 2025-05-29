@@ -31,8 +31,9 @@ type FlickrUploader struct {
 
 // UploadResult contains the result of an upload
 type UploadResult struct {
-	PhotoID string
-	URL     string
+	PhotoID  string
+	URL      string   // Photo page URL
+	ImageURL string   // Direct image URL for embedding
 }
 
 // NewFlickrUploader creates a new Flickr uploader
@@ -102,22 +103,9 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 		"oauth_nonce":           client.Nonce(),
 	}
 	
-	// For Flickr photo uploads, we need to include form parameters in the signature
-	signatureParams := make(map[string]string)
-	for k, v := range oauthParams {
-		signatureParams[k] = v
-	}
-	
-	// Add form fields to signature params (but not the photo data)
-	if title != "" {
-		signatureParams["title"] = title
-	}
-	if description != "" {
-		signatureParams["description"] = description
-	}
-	
-	// Calculate signature with all parameters
-	signature := client.Signature("POST", flickrUploadURL, signatureParams, u.AccessSecret)
+	// For Flickr uploads, do NOT include form parameters in signature
+	// Only OAuth parameters are included
+	signature := client.Signature("POST", flickrUploadURL, oauthParams, u.AccessSecret)
 	oauthParams["oauth_signature"] = signature
 	
 	// Build authorization header
@@ -157,12 +145,38 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 		return nil, fmt.Errorf("failed to parse photo ID from response: %s", body)
 	}
 	
-	// For now, use the edit URL which works without knowing the user ID
-	url := fmt.Sprintf("https://www.flickr.com/photos/upload/edit/?ids=%s", photoID)
+	// Get the actual photo URL and sizes
+	api := &FlickrAPI{FlickrUploader: u}
+	photoInfo, err := api.GetPhotoInfo(ctx, photoID)
+	if err != nil {
+		// Fall back to edit URL if we can't get photo info
+		return &UploadResult{
+			PhotoID: photoID,
+			URL:     fmt.Sprintf("https://www.flickr.com/photos/upload/edit/?ids=%s", photoID),
+		}, nil
+	}
+	
+	// Get photo sizes to find a good image URL
+	sizes, err := api.GetPhotoSizes(ctx, photoID)
+	imageURL := ""
+	if err == nil && len(sizes) > 0 {
+		// Look for "Large" size, or fall back to the last (usually largest) size
+		for _, size := range sizes {
+			if size.Label == "Large" || size.Label == "Large 1024" {
+				imageURL = size.Source
+				break
+			}
+		}
+		if imageURL == "" && len(sizes) > 0 {
+			// Use the last size (usually the largest)
+			imageURL = sizes[len(sizes)-1].Source
+		}
+	}
 	
 	return &UploadResult{
-		PhotoID: photoID,
-		URL:     url,
+		PhotoID:  photoID,
+		URL:      photoInfo.URL,
+		ImageURL: imageURL,
 	}, nil
 }
 
