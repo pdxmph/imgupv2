@@ -55,7 +55,15 @@ func (a *FlickrAuth) Authenticate(ctx context.Context) (*oauth.OAuth1Token, erro
 	
 	// Direct user to authorize
 	authURL := client.AuthorizeURL(requestToken)
-	fmt.Printf("\nPlease open this URL in your browser:\n%s\n\n", authURL)
+	fmt.Printf("\nPlease authorize imgupv2 in your browser.\n")
+	fmt.Printf("Opening: %s\n\n", authURL)
+	
+	// Try to open browser automatically
+	if err := oauth.OpenBrowser(authURL); err != nil {
+		fmt.Printf("Could not open browser automatically: %v\n", err)
+		fmt.Printf("Please open this URL manually:\n%s\n\n", authURL)
+	}
+	
 	fmt.Println("Waiting for authorization...")
 	
 	// Wait for callback
