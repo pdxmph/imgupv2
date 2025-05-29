@@ -7,8 +7,10 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 	
 	"github.com/mph/imgupv2/pkg/oauth"
@@ -80,7 +82,7 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 		}
 	}
 	
-	// Close the writer
+	// Close the writer first to finalize the form
 	if err := writer.Close(); err != nil {
 		return nil, fmt.Errorf("failed to close writer: %w", err)
 	}
@@ -100,10 +102,22 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 		"oauth_nonce":           client.Nonce(),
 	}
 	
+	// For Flickr photo uploads, we need to include form parameters in the signature
+	signatureParams := make(map[string]string)
+	for k, v := range oauthParams {
+		signatureParams[k] = v
+	}
 	
-	// Calculate signature
-	// For file uploads, we don't include the body in the signature
-	signature := client.Signature("POST", flickrUploadURL, oauthParams, u.AccessSecret)
+	// Add form fields to signature params (but not the photo data)
+	if title != "" {
+		signatureParams["title"] = title
+	}
+	if description != "" {
+		signatureParams["description"] = description
+	}
+	
+	// Calculate signature with all parameters
+	signature := client.Signature("POST", flickrUploadURL, signatureParams, u.AccessSecret)
 	oauthParams["oauth_signature"] = signature
 	
 	// Build authorization header
@@ -143,12 +157,8 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 		return nil, fmt.Errorf("failed to parse photo ID from response: %s", body)
 	}
 	
-	// Get photo URL
-	url, err := u.getPhotoURL(ctx, photoID)
-	if err != nil {
-		// Don't fail if we can't get the URL, just return the photo ID
-		url = fmt.Sprintf("https://www.flickr.com/photos/upload/edit/?ids=%s", photoID)
-	}
+	// For now, use the edit URL which works without knowing the user ID
+	url := fmt.Sprintf("https://www.flickr.com/photos/upload/edit/?ids=%s", photoID)
 	
 	return &UploadResult{
 		PhotoID: photoID,
@@ -158,13 +168,20 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 
 // buildAuthHeader builds the OAuth authorization header
 func (u *FlickrUploader) buildAuthHeader(params map[string]string) string {
+	// Sort parameters for consistent ordering
+	var keys []string
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	
 	header := "OAuth "
 	first := true
-	for k, v := range params {
+	for _, k := range keys {
 		if !first {
 			header += ", "
 		}
-		header += fmt.Sprintf(`%s="%s"`, k, v)
+		header += fmt.Sprintf(`%s="%s"`, k, url.QueryEscape(params[k]))
 		first = false
 	}
 	return header
@@ -188,12 +205,4 @@ func (u *FlickrUploader) parsePhotoID(response string) string {
 	}
 	
 	return response[startIdx : startIdx+endIdx]
-}
-
-// getPhotoURL gets the URL for a photo
-func (u *FlickrUploader) getPhotoURL(ctx context.Context, photoID string) (string, error) {
-	// For MVP, return the Flickr photo page URL
-	// The actual URL pattern is: https://www.flickr.com/photos/{user-id}/{photo-id}
-	// But we don't have the user ID readily available, so use the edit URL which redirects
-	return fmt.Sprintf("https://www.flickr.com/photos/upload/edit/?ids=%s", photoID), nil
 }
