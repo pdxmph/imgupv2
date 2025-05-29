@@ -53,34 +53,18 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 	}
 	defer file.Close()
 	
-	// Create OAuth parameters
-	client := oauth.NewOAuth1Client(oauth.OAuth1Config{
-		ConsumerKey:    u.ConsumerKey,
-		ConsumerSecret: u.ConsumerSecret,
-	})
-	
-	oauthParams := map[string]string{
-		"oauth_consumer_key":     u.ConsumerKey,
-		"oauth_token":           u.AccessToken,
-		"oauth_signature_method": "HMAC-SHA1",
-		"oauth_version":         "1.0",
-		"oauth_timestamp":       fmt.Sprintf("%d", time.Now().Unix()),
-		"oauth_nonce":           client.Nonce(),
-	}
-	
-	// Calculate signature - only OAuth params, not form data
-	signature := client.Signature("POST", flickrUploadURL, oauthParams, u.AccessSecret)
-	oauthParams["oauth_signature"] = signature
-	
 	// Create multipart form
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 	
-	// Add OAuth parameters as form fields
-	for k, v := range oauthParams {
-		if err := writer.WriteField(k, v); err != nil {
-			return nil, fmt.Errorf("failed to write oauth field %s: %w", k, err)
-		}
+	// Add image file
+	part, err := writer.CreateFormFile("photo", filepath.Base(imagePath))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create form file: %w", err)
+	}
+	
+	if _, err := io.Copy(part, file); err != nil {
+		return nil, fmt.Errorf("failed to copy file: %w", err)
 	}
 	
 	// Add title if provided
@@ -97,27 +81,66 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 		}
 	}
 	
-	// Add image file last
-	part, err := writer.CreateFormFile("photo", filepath.Base(imagePath))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create form file: %w", err)
-	}
-	
-	if _, err := io.Copy(part, file); err != nil {
-		return nil, fmt.Errorf("failed to copy file: %w", err)
-	}
-	
 	// Close the writer
 	if err := writer.Close(); err != nil {
 		return nil, fmt.Errorf("failed to close writer: %w", err)
 	}
 	
-	// Create request without Authorization header
+	// Create OAuth client and parameters
+	client := oauth.NewOAuth1Client(oauth.OAuth1Config{
+		ConsumerKey:    u.ConsumerKey,
+		ConsumerSecret: u.ConsumerSecret,
+	})
+	
+	// Create the request first to get a consistent timestamp
 	req, err := http.NewRequestWithContext(ctx, "POST", flickrUploadURL, &buf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	
+	// Set up OAuth parameters
+	oauthParams := map[string]string{
+		"oauth_consumer_key":     u.ConsumerKey,
+		"oauth_token":           u.AccessToken,
+		"oauth_signature_method": "HMAC-SHA1",
+		"oauth_timestamp":       fmt.Sprintf("%d", time.Now().Unix()),
+		"oauth_nonce":           client.Nonce(),
+		"oauth_version":         "1.0",
+	}
+	
+	// Create signature parameters including form fields
+	// Flickr's debug_sbs shows they expect these in the signature
+	signatureParams := make(map[string]string)
+	for k, v := range oauthParams {
+		signatureParams[k] = v
+	}
+	
+	// Add form fields to signature
+	if title != "" {
+		signatureParams["title"] = title
+	}
+	if description != "" {
+		signatureParams["description"] = description
+	}
+	
+	// Calculate signature with all parameters
+	signature := client.Signature("POST", flickrUploadURL, signatureParams, u.AccessSecret)
+	oauthParams["oauth_signature"] = signature
+	
+	// Debug output
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: All signature params:\n")
+		for k, v := range signatureParams {
+			fmt.Fprintf(os.Stderr, "  %s = %s\n", k, v)
+		}
+		fmt.Fprintf(os.Stderr, "DEBUG: OAuth signature = %s\n", signature)
+	}
+	
+	// Build Authorization header
+	authHeader := u.buildAuthHeader(oauthParams)
+	
+	// Set headers
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.ContentLength = int64(buf.Len())
 	
@@ -178,6 +201,27 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 		URL:      photoInfo.URL,
 		ImageURL: imageURL,
 	}, nil
+}
+
+// buildAuthHeader builds the OAuth authorization header  
+func (u *FlickrUploader) buildAuthHeader(params map[string]string) string {
+	header := "OAuth "
+	first := true
+	
+	// Build header in a specific order for consistency
+	keys := []string{"oauth_consumer_key", "oauth_nonce", "oauth_signature", 
+		"oauth_signature_method", "oauth_timestamp", "oauth_token", "oauth_version"}
+	
+	for _, k := range keys {
+		if v, ok := params[k]; ok {
+			if !first {
+				header += ", "
+			}
+			header += fmt.Sprintf(`%s="%s"`, k, v)
+			first = false
+		}
+	}
+	return header
 }
 
 // parsePhotoID extracts the photo ID from the upload response
