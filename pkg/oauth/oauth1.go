@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -127,9 +128,10 @@ func (c *OAuth1Client) baseParams() map[string]string {
 
 // nonce generates a random nonce
 func (c *OAuth1Client) nonce() string {
-	b := make([]byte, 32)
+	b := make([]byte, 16) // Use 16 bytes instead of 32 for shorter nonce
 	rand.Read(b)
-	return base64.URLEncoding.EncodeToString(b)
+	// Use RawURLEncoding to avoid padding with = which causes issues
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // Nonce generates a random nonce (exported for use by backends)
@@ -160,6 +162,11 @@ func (c *OAuth1Client) signature(method, baseURL string, params map[string]strin
 		method,
 		url.QueryEscape(baseURL),
 		url.QueryEscape(paramString))
+	
+	// Debug output
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Signature base string:\n%s\n", signatureBase)
+	}
 	
 	// Calculate HMAC-SHA1
 	key := fmt.Sprintf("%s&%s", 
