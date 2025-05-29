@@ -132,6 +132,11 @@ func (c *OAuth1Client) nonce() string {
 	return base64.URLEncoding.EncodeToString(b)
 }
 
+// Nonce generates a random nonce (exported for use by backends)
+func (c *OAuth1Client) Nonce() string {
+	return c.nonce()
+}
+
 // signature calculates the OAuth signature
 func (c *OAuth1Client) signature(method, baseURL string, params map[string]string, tokenSecret string) string {
 	// Sort parameters
@@ -165,6 +170,11 @@ func (c *OAuth1Client) signature(method, baseURL string, params map[string]strin
 	h.Write([]byte(signatureBase))
 	
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+}
+
+// Signature calculates the OAuth signature (exported for use by backends)
+func (c *OAuth1Client) Signature(method, baseURL string, params map[string]string, tokenSecret string) string {
+	return c.signature(method, baseURL, params, tokenSecret)
 }
 
 // makeRequest makes an OAuth-signed HTTP request
