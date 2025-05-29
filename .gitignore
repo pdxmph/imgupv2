@@ -1,0 +1,21 @@
+# Binaries
+imgup
+imgupv2
+*.exe
+
+# Go
+vendor/
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Test outputs
+tests/output/
