@@ -18,8 +18,13 @@
             </div>
             
             <div class="field">
-                <label for="caption">Caption/Alt Text</label>
-                <textarea id="caption" name="caption" rows="3"></textarea>
+                <label for="alt">Alt Text</label>
+                <textarea id="alt" name="alt" rows="2" placeholder="Alt text for accessibility"></textarea>
+            </div>
+            
+            <div class="field">
+                <label for="description">Description</label>
+                <textarea id="description" name="description" rows="3" placeholder="Photo description"></textarea>
             </div>
             
             <div class="field">
@@ -31,20 +36,20 @@
             
             <div class="options">
                 <div class="field-inline">
-                    <label>Backend:</label>
-                    <select id="backend">
-                        <option value="flickr">Flickr</option>
-                        <option value="smugmug">SmugMug</option>
-                    </select>
-                </div>
-                
-                <div class="field-inline">
                     <label>Format:</label>
                     <select id="format">
                         <option value="markdown">Markdown</option>
                         <option value="html">HTML</option>
-                        <option value="org">Org-mode</option>
+                        <option value="url">URL</option>
+                        <option value="json">JSON</option>
                     </select>
+                </div>
+                
+                <div class="field-inline">
+                    <label>
+                        <input type="checkbox" id="private" name="private">
+                        Private
+                    </label>
                 </div>
             </div>
             

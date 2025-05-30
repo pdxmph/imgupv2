@@ -1,10 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -18,12 +19,13 @@ type App struct {
 
 // PhotoMetadata represents the metadata for a photo
 type PhotoMetadata struct {
-	Path     string   `json:"path"`
-	Title    string   `json:"title"`
-	Caption  string   `json:"caption"`
-	Tags     []string `json:"tags"`
-	Backend  string   `json:"backend"` // "flickr" or "smugmug"
-	Format   string   `json:"format"`  // "markdown", "html", "org"
+	Path        string   `json:"path"`
+	Title       string   `json:"title"`
+	Alt         string   `json:"alt"`         // Alt text, not caption
+	Description string   `json:"description"` // Photo description
+	Tags        []string `json:"tags"`
+	Format      string   `json:"format"` // "url", "markdown", "html", "json"
+	Private     bool     `json:"private"`
 }
 
 // UploadResult represents the result of an upload operation
@@ -55,7 +57,12 @@ func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
 			set theSelection to selection
 			if length of theSelection is greater than 0 then
 				set theFile to item 1 of theSelection as alias
-				return POSIX path of theFile
+				set thePath to POSIX path of theFile
+				-- Remove trailing slash if it's there
+				if thePath ends with "/" then
+					set thePath to text 1 thru -2 of thePath
+				end if
+				return thePath
 			end if
 		end tell`
 
@@ -69,6 +76,15 @@ func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
 		if path == "" {
 			return nil, fmt.Errorf("no file selected in Finder")
 		}
+		
+		// Check if this is actually a file (not a directory)
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, fmt.Errorf("cannot access selected item: %w", err)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("selected item is a directory, not a file")
+		}
 	} else {
 		// Linux: Could check for nautilus/dolphin selection via DBus
 		// For now, return empty - GUI can show file picker
@@ -78,8 +94,8 @@ func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
 	// Extract EXIF metadata using exiftool
 	metadata := &PhotoMetadata{
 		Path:    path,
-		Backend: "flickr", // default
-		Format:  "markdown",
+		Format:  "markdown", // default
+		Private: false,      // default to public
 	}
 
 	// Run exiftool to get title/caption/keywords
@@ -94,7 +110,7 @@ func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
 			}
 			
 			if caption, ok := data["Caption-Abstract"].(string); ok {
-				metadata.Caption = caption
+				metadata.Alt = caption // Use caption as alt text
 			}
 			
 			// Subject can be string or []interface{}
@@ -128,20 +144,38 @@ func (a *App) GetRecentTags() []string {
 // Upload handles the actual upload via imgup CLI
 func (a *App) Upload(metadata PhotoMetadata) (*UploadResult, error) {
 	// Build imgup command
-	args := []string{
-		"upload",
-		"--backend", metadata.Backend,
-		"--format", metadata.Format,
-		"--title", metadata.Title,
-		"--caption", metadata.Caption,
+	args := []string{"upload"}
+	
+	// Add format flag
+	args = append(args, "--format", metadata.Format)
+	
+	// Only add title if not empty
+	if metadata.Title != "" {
+		args = append(args, "--title", metadata.Title)
+	}
+	
+	// Only add alt text if not empty  
+	if metadata.Alt != "" {
+		args = append(args, "--alt", metadata.Alt)
+	}
+	
+	// Only add description if not empty
+	if metadata.Description != "" {
+		args = append(args, "--description", metadata.Description)
 	}
 
-	for _, tag := range metadata.Tags {
-		if tag != "" {
-			args = append(args, "--tag", tag)
-		}
+	// Add tags if present
+	if len(metadata.Tags) > 0 {
+		// Join tags with commas as per the help text
+		args = append(args, "--tags", strings.Join(metadata.Tags, ","))
+	}
+	
+	// Add private flag if set
+	if metadata.Private {
+		args = append(args, "--private")
 	}
 
+	// Add the file path at the end
 	args = append(args, metadata.Path)
 
 	// Find imgup binary - first check if it's in the parent directory
@@ -152,22 +186,42 @@ func (a *App) Upload(metadata PhotoMetadata) (*UploadResult, error) {
 
 	// Run imgup CLI
 	cmd := exec.Command(imgupPath, args...)
-	out, err := cmd.CombinedOutput()
+	
+	// Capture stdout and stderr separately
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	
+	err := cmd.Run()
 	if err != nil {
 		return &UploadResult{
 			Success: false,
-			Error:   fmt.Sprintf("Upload failed: %s\nOutput: %s", err.Error(), string(out)),
+			Error:   fmt.Sprintf("Upload failed: %s\nStderr: %s\nStdout: %s", err.Error(), stderr.String(), stdout.String()),
 		}, nil
+	}
+	
+	// Extract just the final line (the snippet) from stdout
+	output := strings.TrimSpace(stdout.String())
+	lines := strings.Split(output, "\n")
+	snippet := ""
+	if len(lines) > 0 {
+		// The snippet should be the last non-empty line
+		for i := len(lines) - 1; i >= 0; i-- {
+			if strings.TrimSpace(lines[i]) != "" {
+				snippet = lines[i]
+				break
+			}
+		}
 	}
 
 	return &UploadResult{
 		Success: true,
-		Snippet: string(out),
+		Snippet: snippet,
 	}, nil
 }
 
 // fileExists checks if a file exists
 func fileExists(path string) bool {
-	_, err := exec.LookPath(path)
+	_, err := os.Stat(path)
 	return err == nil
 }

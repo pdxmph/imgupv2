@@ -52,10 +52,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 function populateForm(metadata) {
     document.getElementById('title').value = metadata.title || '';
-    document.getElementById('caption').value = metadata.caption || '';
+    document.getElementById('alt').value = metadata.alt || '';
+    document.getElementById('description').value = metadata.description || '';
     document.getElementById('tags').value = (metadata.tags || []).join(' ');
-    document.getElementById('backend').value = metadata.backend || 'flickr';
     document.getElementById('format').value = metadata.format || 'markdown';
+    document.getElementById('private').checked = metadata.private || false;
 }
 
 function loadPreview(path) {
@@ -140,10 +141,11 @@ async function handleUpload(e) {
     const metadata = {
         path: currentPhotoMetadata.path,
         title: form.title.value.trim(),
-        caption: form.caption.value.trim(),
+        alt: form.alt.value.trim(),
+        description: form.description.value.trim(),
         tags: form.tags.value.split(/\s+/).filter(t => t),
-        backend: form.backend.value,
-        format: form.format.value
+        format: form.format.value,
+        private: form.private.checked
     };
     
     // Show progress

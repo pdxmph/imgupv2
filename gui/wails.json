@@ -23,7 +23,6 @@
   "runNonNativeBuildHooks": false,
   "preBuildHooks": {},
   "postBuildHooks": {},
-  "frontend:dev:serverUrl": "auto",
   "bindings": {
     "prefix": "",
     "suffix": "",

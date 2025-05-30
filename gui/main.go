@@ -31,24 +31,6 @@ func main() {
 		Bind: []interface{}{
 			app,
 		},
-		// Make it a floating window that doesn't appear in dock
-		Mac: &options.Mac{
-			TitleBar: &options.MacTitleBar{
-				TitlebarAppearsTransparent: true,
-				HideTitle:                  false,
-				HideTitleBar:               false,
-				FullSizeContent:            false,
-				UseToolbar:                 false,
-				HideToolbarSeparator:       true,
-			},
-			Appearance:           options.NSAppearanceNameAqua,
-			WebviewIsTransparent: false,
-			WindowIsTranslucent:  false,
-			About: &options.AboutInfo{
-				Title:   "imgupv2",
-				Message: "A fast image upload tool for photographers",
-			},
-		},
 	})
 
 	if err != nil {
