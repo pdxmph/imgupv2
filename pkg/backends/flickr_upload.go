@@ -72,12 +72,18 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 		if err := writer.WriteField("title", title); err != nil {
 			return nil, fmt.Errorf("failed to write title: %w", err)
 		}
+		if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Added title field: %s\n", title)
+		}
 	}
 	
 	// Add description if provided
 	if description != "" {
 		if err := writer.WriteField("description", description); err != nil {
 			return nil, fmt.Errorf("failed to write description: %w", err)
+		}
+		if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Added description field: %s\n", description)
 		}
 	}
 	
