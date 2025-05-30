@@ -9,7 +9,8 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	Flickr FlickrConfig `json:"flickr"`
+	Flickr    FlickrConfig          `json:"flickr"`
+	Templates map[string]string     `json:"templates,omitempty"`
 }
 
 // FlickrConfig holds Flickr-specific configuration
@@ -20,6 +21,17 @@ type FlickrConfig struct {
 	AccessSecret   string `json:"access_secret,omitempty"`
 }
 
+// DefaultTemplates returns the default output templates
+func DefaultTemplates() map[string]string {
+	return map[string]string{
+		"markdown": "![%alt%|%description%|%title%|%filename%](%image_url%)",
+		"html":     `<img src="%image_url%" alt="%alt%|%description%|%title%|%filename%">`,
+		"edit_url": "%edit_url%",
+		"url":      "%url%",
+		"json":     `{"photo_id":"%photo_id%","url":"%url%","image_url":"%image_url%"}`,
+	}
+}
+
 // Load loads configuration from the default location
 func Load() (*Config, error) {
 	path := configPath()
@@ -27,7 +39,10 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &Config{}, nil
+			// Return config with default templates
+			return &Config{
+				Templates: DefaultTemplates(),
+			}, nil
 		}
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
@@ -35,6 +50,19 @@ func Load() (*Config, error) {
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+	
+	// Ensure default templates exist
+	if cfg.Templates == nil {
+		cfg.Templates = DefaultTemplates()
+	} else {
+		// Add any missing default templates
+		defaults := DefaultTemplates()
+		for k, v := range defaults {
+			if _, exists := cfg.Templates[k]; !exists {
+				cfg.Templates[k] = v
+			}
+		}
 	}
 	
 	return &cfg, nil
