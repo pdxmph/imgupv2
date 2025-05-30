@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // App struct
@@ -50,7 +51,24 @@ func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
 	var path string
 
 	if runtime.GOOS == "darwin" {
-		// AppleScript to get selected file in Finder
+		// First check if Photos has a selection
+		photosCheckScript := `
+		tell application "Photos"
+			if running then
+				if (count of selection) > 0 then
+					return "has_selection"
+				end if
+			end if
+		end tell
+		return ""`
+		
+		cmd := exec.Command("osascript", "-e", photosCheckScript)
+		if out, err := cmd.Output(); err == nil && strings.TrimSpace(string(out)) == "has_selection" {
+			// Photos has a selection, use that
+			return a.getPhotoFromPhotosApp()
+		}
+		
+		// Otherwise try Finder
 		script := `
 		tell application "Finder"
 			set theSelection to selection
@@ -65,7 +83,7 @@ func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
 			end if
 		end tell`
 
-		cmd := exec.Command("osascript", "-e", script)
+		cmd = exec.Command("osascript", "-e", script)
 		out, err := cmd.Output()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get Finder selection: %w", err)
@@ -126,6 +144,156 @@ func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
 		}
 	}
 
+	return metadata, nil
+}
+
+// getPhotoFromPhotosApp exports the selected photo from Photos.app with metadata
+func (a *App) getPhotoFromPhotosApp() (*PhotoMetadata, error) {
+	// Create temp directory
+	tempDir, err := os.MkdirTemp("", "imgupv2-photos-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	
+	// AppleScript to export and get metadata from Photos
+	exportScript := fmt.Sprintf(`
+	set tempFolder to "%s"
+	set exportResult to ""
+	
+	tell application "Photos"
+		set sel to selection
+		if sel is {} then
+			return "ERROR:No photo selected"
+		end if
+		set photo to item 1 of sel
+		
+		-- Get metadata from Photos
+		try
+			set pTitle to name of photo
+		on error
+			set pTitle to ""
+		end try
+		
+		try
+			set pDesc to description of photo
+		on error
+			set pDesc to ""
+		end try
+		
+		-- Get keywords (they're already strings)
+		set pKeywords to {}
+		try
+			set photoKeywords to keywords of photo
+			repeat with kw in photoKeywords
+				copy (kw as string) to end of pKeywords
+			end repeat
+		end try
+		
+		-- Export with originals
+		export {photo} to (POSIX file tempFolder) with using originals
+		
+		-- Build result string with delimiters
+		set exportResult to "TITLE:" & pTitle & "|DESC:" & pDesc & "|KEYWORDS:"
+		if (count of pKeywords) > 0 then
+			set AppleScript's text item delimiters to ","
+			set exportResult to exportResult & (pKeywords as string)
+			set AppleScript's text item delimiters to ""
+		end if
+		
+		return exportResult
+	end tell`, tempDir)
+	
+	cmd := exec.Command("osascript", "-e", exportScript)
+	out, err := cmd.CombinedOutput() // This captures both stdout and stderr
+	if err != nil {
+		os.RemoveAll(tempDir)
+		return nil, fmt.Errorf("failed to export from Photos: %w\nOutput: %s", err, string(out))
+	}
+	
+	result := strings.TrimSpace(string(out))
+	if strings.HasPrefix(result, "ERROR:") {
+		os.RemoveAll(tempDir)
+		return nil, fmt.Errorf(strings.TrimPrefix(result, "ERROR:"))
+	}
+	
+	// Parse the metadata
+	var title, desc string
+	var keywords []string
+	
+	parts := strings.Split(result, "|")
+	for _, part := range parts {
+		if strings.HasPrefix(part, "TITLE:") {
+			title = strings.TrimPrefix(part, "TITLE:")
+		} else if strings.HasPrefix(part, "DESC:") {
+			desc = strings.TrimPrefix(part, "DESC:")
+		} else if strings.HasPrefix(part, "KEYWORDS:") {
+			kwStr := strings.TrimPrefix(part, "KEYWORDS:")
+			if kwStr != "" {
+				keywords = strings.Split(kwStr, ",")
+			}
+		}
+	}
+	
+	// Wait for export to complete
+	time.Sleep(1 * time.Second)
+	
+	// Find the exported file
+	files, err := os.ReadDir(tempDir)
+	if err != nil || len(files) == 0 {
+		os.RemoveAll(tempDir)
+		return nil, fmt.Errorf("no file exported from Photos")
+	}
+	
+	// Get the most recent file
+	exportedPath := filepath.Join(tempDir, files[0].Name())
+	
+	// Re-embed metadata using exiftool if we have any
+	if title != "" || desc != "" || len(keywords) > 0 {
+		exifArgs := []string{"-overwrite_original"}
+		
+		if title != "" {
+			exifArgs = append(exifArgs, "-XMP-dc:Title="+title)
+		}
+		
+		if desc != "" {
+			exifArgs = append(exifArgs, "-ImageDescription="+desc)
+			exifArgs = append(exifArgs, "-XMP-dc:Description="+desc)
+		}
+		
+		for _, kw := range keywords {
+			exifArgs = append(exifArgs, "-XMP-dc:Subject+="+strings.TrimSpace(kw))
+		}
+		
+		exifArgs = append(exifArgs, exportedPath)
+		
+		cmd := exec.Command("exiftool", exifArgs...)
+		if err := cmd.Run(); err != nil {
+			// Non-fatal: continue even if metadata embedding fails
+			fmt.Fprintf(os.Stderr, "Warning: failed to embed metadata: %v\n", err)
+		}
+		
+		// Give exiftool time to write
+		time.Sleep(500 * time.Millisecond)
+	}
+	
+	// Create metadata object
+	metadata := &PhotoMetadata{
+		Path:        exportedPath,
+		Title:       title,
+		Alt:         desc, // Use description as alt text
+		Description: desc,
+		Tags:        keywords,
+		Format:      "markdown", // default
+		Private:     false,      // default to public
+		// Mark this as a temp file that needs cleanup
+	}
+	
+	// Schedule cleanup after 60 seconds (giving time for upload)
+	go func() {
+		time.Sleep(60 * time.Second)
+		os.RemoveAll(tempDir)
+	}()
+	
 	return metadata, nil
 }
 
