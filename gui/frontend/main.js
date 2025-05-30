@@ -10,8 +10,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             currentPhotoMetadata = metadata;
             populateForm(metadata);
             loadPreview(metadata.path);
+            
+            // Show a note if this is from Photos
+            if (metadata.isTemporary) {
+                showInfo('Photo exported from Photos.app with metadata preserved');
+            }
         } else {
-            showError('No photo selected in Finder');
+            showError('No photo selected in Finder or Photos');
             setTimeout(() => {
                 window.runtime.Quit();
             }, 2000);
@@ -189,6 +194,16 @@ function showSuccess(message) {
     const successDiv = document.getElementById('success-message');
     successDiv.textContent = message;
     successDiv.classList.remove('hidden');
+}
+
+function showInfo(message) {
+    const successDiv = document.getElementById('success-message');
+    successDiv.textContent = message;
+    successDiv.classList.remove('hidden');
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+        successDiv.classList.add('hidden');
+    }, 3000);
 }
 
 function showToast(message) {

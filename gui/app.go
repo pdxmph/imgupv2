@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -187,22 +186,25 @@ func (a *App) Upload(metadata PhotoMetadata) (*UploadResult, error) {
 	// Run imgup CLI
 	cmd := exec.Command(imgupPath, args...)
 	
-	// Capture stdout and stderr separately
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	
-	err := cmd.Run()
+	// Use Output() which waits for the command to complete
+	output, err := cmd.Output()
 	if err != nil {
+		// Get stderr if available
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return &UploadResult{
+				Success: false,
+				Error:   fmt.Sprintf("Upload failed: %s\nStderr: %s", err.Error(), string(exitErr.Stderr)),
+			}, nil
+		}
 		return &UploadResult{
 			Success: false,
-			Error:   fmt.Sprintf("Upload failed: %s\nStderr: %s\nStdout: %s", err.Error(), stderr.String(), stdout.String()),
+			Error:   fmt.Sprintf("Upload failed: %s", err.Error()),
 		}, nil
 	}
 	
 	// Extract just the final line (the snippet) from stdout
-	output := strings.TrimSpace(stdout.String())
-	lines := strings.Split(output, "\n")
+	outputStr := strings.TrimSpace(string(output))
+	lines := strings.Split(outputStr, "\n")
 	snippet := ""
 	if len(lines) > 0 {
 		// The snippet should be the last non-empty line
