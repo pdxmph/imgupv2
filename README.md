@@ -185,3 +185,11 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## Acknowledgments
 
 - Original [imgup-cli](https://github.com/pdxmph/imgup-cli) Ruby implementation
+
+### Open Source Libraries
+
+This project uses the following excellent Go libraries:
+
+- [dghubble/oauth1](https://github.com/dghubble/oauth1) - OAuth 1.0 implementation for Flickr authentication
+- [spf13/cobra](https://github.com/spf13/cobra) - Modern CLI library for creating powerful commands
+- [google/uuid](https://github.com/google/uuid) - UUID generation for request tracking
