@@ -52,14 +52,15 @@ func (w *Writer) WriteMetadata(imagePath, title, description string, keywords []
 	}
 	
 	if len(keywords) > 0 {
-		// Write keywords/tags to multiple fields
-		// Flickr reads these as tags
-		keywordList := strings.Join(keywords, ", ")
-		args = append(args,
-			fmt.Sprintf("-Keywords=%s", keywordList),
-			fmt.Sprintf("-XMP:Subject=%s", keywordList),
-			fmt.Sprintf("-IPTC:Keywords=%s", keywordList),
-		)
+		// Write keywords/tags as separate values
+		// Flickr needs them as an array, not a comma-separated string
+		for _, keyword := range keywords {
+			args = append(args,
+				fmt.Sprintf("-Keywords+=%s", keyword),      // += adds to array
+				fmt.Sprintf("-XMP:Subject+=%s", keyword),   // += adds to array
+				fmt.Sprintf("-IPTC:Keywords+=%s", keyword), // += adds to array
+			)
+		}
 	}
 	
 	// Add the file path
