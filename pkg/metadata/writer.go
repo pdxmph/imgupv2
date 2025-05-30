@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,15 +16,30 @@ type Writer struct {
 
 // NewWriter creates a new metadata writer
 func NewWriter() (*Writer, error) {
-	// Check if exiftool is available
+	// Check if exiftool is available in PATH
 	path, err := exec.LookPath("exiftool")
-	if err != nil {
-		return nil, fmt.Errorf("exiftool not found in PATH: %w", err)
+	if err == nil {
+		return &Writer{
+			exiftoolPath: path,
+		}, nil
 	}
 	
-	return &Writer{
-		exiftoolPath: path,
-	}, nil
+	// Check common locations
+	possiblePaths := []string{
+		"/opt/homebrew/bin/exiftool",
+		"/usr/local/bin/exiftool",
+		"/usr/bin/exiftool",
+	}
+	
+	for _, path := range possiblePaths {
+		if _, err := os.Stat(path); err == nil {
+			return &Writer{
+				exiftoolPath: path,
+			}, nil
+		}
+	}
+	
+	return nil, fmt.Errorf("exiftool not found in PATH or common locations")
 }
 
 // WriteMetadata writes title, description, and keywords to image metadata
@@ -109,28 +125,129 @@ func (w *Writer) CopyWithMetadata(imagePath, title, description string, keywords
 
 // HasExiftool checks if exiftool is available
 func HasExiftool() bool {
-	_, err := exec.LookPath("exiftool")
-	return err == nil
-}
-
-// ReadMetadata reads metadata from an image (for testing)
-func (w *Writer) ReadMetadata(imagePath string) (map[string]string, error) {
-	cmd := exec.Command(w.exiftoolPath, "-Title", "-Description", imagePath)
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read metadata: %w", err)
+	// First check PATH
+	if _, err := exec.LookPath("exiftool"); err == nil {
+		return true
 	}
 	
-	metadata := make(map[string]string)
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
-			metadata[key] = value
+	// Check common locations
+	possiblePaths := []string{
+		"/opt/homebrew/bin/exiftool",
+		"/usr/local/bin/exiftool",
+		"/usr/bin/exiftool",
+	}
+	
+	for _, path := range possiblePaths {
+		if _, err := os.Stat(path); err == nil {
+			return true
 		}
 	}
 	
-	return metadata, nil
+	return false
+}
+
+// ExtractMetadata extracts title, description, and keywords from image
+func ExtractMetadata(imagePath string) (title, description string, keywords []string, err error) {
+	// Find exiftool
+	var exiftoolPath string
+	
+	// Check PATH first
+	if path, err := exec.LookPath("exiftool"); err == nil {
+		exiftoolPath = path
+	} else {
+		// Check common locations
+		possiblePaths := []string{
+			"/opt/homebrew/bin/exiftool",
+			"/usr/local/bin/exiftool",
+			"/usr/bin/exiftool",
+		}
+		
+		for _, path := range possiblePaths {
+			if _, err := os.Stat(path); err == nil {
+				exiftoolPath = path
+				break
+			}
+		}
+	}
+	
+	if exiftoolPath == "" {
+		fmt.Fprintf(os.Stderr, "DEBUG ExtractMetadata: exiftool not found\n")
+		return "", "", nil, nil
+	}
+	
+	// Run exiftool to extract metadata
+	cmd := exec.Command(exiftoolPath, "-json", "-Title", "-ObjectName", "-Description", "-Caption-Abstract", "-Keywords", "-Subject", imagePath)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", "", nil, fmt.Errorf("failed to extract metadata: %w", err)
+	}
+	
+	fmt.Fprintf(os.Stderr, "DEBUG ExtractMetadata: Using %s, output length: %d\n", exiftoolPath, len(output))
+	
+	// Parse JSON output
+	var results []map[string]interface{}
+	if err := json.Unmarshal(output, &results); err != nil {
+		return "", "", nil, fmt.Errorf("failed to parse exiftool output: %w", err)
+	}
+	
+	if len(results) == 0 {
+		return "", "", nil, nil
+	}
+	
+	result := results[0]
+	
+	return extractFromResult(result)
+}
+
+func extractFromResult(result map[string]interface{}) (title, description string, keywords []string, err error) {
+	// Debug: print what we got
+	fmt.Fprintf(os.Stderr, "DEBUG ExtractMetadata: Got %d fields\n", len(result))
+	
+	// Extract title (try multiple fields)
+	if val, ok := result["Title"]; ok && val != nil {
+		title = fmt.Sprintf("%v", val)
+	} else if val, ok := result["ObjectName"]; ok && val != nil {
+		title = fmt.Sprintf("%v", val)
+	}
+	
+	// Extract description (try multiple fields)  
+	if val, ok := result["Description"]; ok && val != nil {
+		description = fmt.Sprintf("%v", val)
+	} else if val, ok := result["Caption-Abstract"]; ok && val != nil {
+		description = fmt.Sprintf("%v", val)
+	} else if val, ok := result["ImageDescription"]; ok && val != nil {
+		description = fmt.Sprintf("%v", val)
+	}
+	
+	// Extract keywords (can be string or array)
+	keywordSet := make(map[string]bool)
+	for _, field := range []string{"Keywords", "Subject"} {
+		if val, ok := result[field]; ok && val != nil {
+			switch v := val.(type) {
+			case string:
+				// Single keyword or comma-separated
+				for _, k := range strings.Split(v, ",") {
+					if trimmed := strings.TrimSpace(k); trimmed != "" {
+						keywordSet[trimmed] = true
+					}
+				}
+			case []interface{}:
+				// Array of keywords
+				for _, k := range v {
+					if str, ok := k.(string); ok && str != "" {
+						keywordSet[str] = true
+					}
+				}
+			}
+		}
+	}
+	
+	// Convert set to slice
+	for k := range keywordSet {
+		keywords = append(keywords, k)
+	}
+	
+	fmt.Fprintf(os.Stderr, "DEBUG ExtractMetadata: Final - Title: %q, Desc: %q, Tags: %v\n", title, description, keywords)
+	
+	return title, description, keywords, nil
 }

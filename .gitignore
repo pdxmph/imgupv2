@@ -1,21 +1,51 @@
-# Binaries
-imgup
-imgupv2
+# Binaries for programs and plugins
 *.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 
-# Go
-vendor/
+# Test binary, built with `go test -c`
 *.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
-# IDE
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# Build output
+imgup
+imgupv2
+dist/
+
+# IDE specific files
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
 
-# OS
+# OS specific files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
-# Test outputs
-tests/output/
+# Project specific
+*.log
+.env
+.env.local
+
+# Test coverage
+coverage.txt
+coverage.html
+
+# goreleaser
+dist/

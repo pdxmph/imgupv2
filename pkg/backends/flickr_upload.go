@@ -3,15 +3,17 @@ package backends
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"time"
+	"strings"
 	
-	"github.com/mph/imgupv2/pkg/oauth"
+	"github.com/dghubble/oauth1"
 )
 
 const (
@@ -44,144 +46,47 @@ func NewFlickrUploader(consumerKey, consumerSecret, accessToken, accessSecret st
 	}
 }
 
-// Upload uploads an image to Flickr
-func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, description string) (*UploadResult, error) {
-	// Open the image file
-	file, err := os.Open(imagePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open image: %w", err)
-	}
-	defer file.Close()
-	
-	// Create multipart form
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-	
-	// Add image file
-	part, err := writer.CreateFormFile("photo", filepath.Base(imagePath))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create form file: %w", err)
-	}
-	
-	if _, err := io.Copy(part, file); err != nil {
-		return nil, fmt.Errorf("failed to copy file: %w", err)
-	}
-	
-	// Add title if provided
-	if title != "" {
-		if err := writer.WriteField("title", title); err != nil {
-			return nil, fmt.Errorf("failed to write title: %w", err)
-		}
-		if os.Getenv("IMGUP_DEBUG") != "" {
-			fmt.Fprintf(os.Stderr, "DEBUG: Added title field: %s\n", title)
-		}
-	}
-	
-	// Add description if provided
-	if description != "" {
-		if err := writer.WriteField("description", description); err != nil {
-			return nil, fmt.Errorf("failed to write description: %w", err)
-		}
-		if os.Getenv("IMGUP_DEBUG") != "" {
-			fmt.Fprintf(os.Stderr, "DEBUG: Added description field: %s\n", description)
-		}
-	}
-	
-	// Close the writer
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close writer: %w", err)
-	}
-	
-	// Create OAuth client and parameters
-	client := oauth.NewOAuth1Client(oauth.OAuth1Config{
-		ConsumerKey:    u.ConsumerKey,
-		ConsumerSecret: u.ConsumerSecret,
-	})
-	
-	// Create the request first to get a consistent timestamp
-	req, err := http.NewRequestWithContext(ctx, "POST", flickrUploadURL, &buf)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	
-	// Set up OAuth parameters
-	oauthParams := map[string]string{
-		"oauth_consumer_key":     u.ConsumerKey,
-		"oauth_token":           u.AccessToken,
-		"oauth_signature_method": "HMAC-SHA1",
-		"oauth_timestamp":       fmt.Sprintf("%d", time.Now().Unix()),
-		"oauth_nonce":           client.Nonce(),
-		"oauth_version":         "1.0",
-	}
-	
-	// Create signature parameters including form fields
-	// Flickr's debug_sbs shows they expect these in the signature
-	signatureParams := make(map[string]string)
-	for k, v := range oauthParams {
-		signatureParams[k] = v
-	}
-	
-	// Add form fields to signature
-	if title != "" {
-		signatureParams["title"] = title
-	}
-	if description != "" {
-		signatureParams["description"] = description
-	}
-	
-	// Calculate signature with all parameters
-	signature := client.Signature("POST", flickrUploadURL, signatureParams, u.AccessSecret)
-	oauthParams["oauth_signature"] = signature
-	
-	// Debug output
+// Upload uploads an image to Flickr using upload-then-set pattern
+func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, description string, isPrivate bool) (*UploadResult, error) {
 	if os.Getenv("IMGUP_DEBUG") != "" {
-		fmt.Fprintf(os.Stderr, "DEBUG: All signature params:\n")
-		for k, v := range signatureParams {
-			fmt.Fprintf(os.Stderr, "  %s = %s\n", k, v)
+		fmt.Fprintf(os.Stderr, "DEBUG: Upload called with isPrivate=%v\n", isPrivate)
+	}
+	
+	// Step 1: Upload the photo with NO metadata
+	photoID, err := u.uploadPhoto(ctx, imagePath)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Step 2: Set metadata if provided
+	if title != "" || description != "" {
+		if err := u.setPhotoMeta(ctx, photoID, title, description); err != nil {
+			// Log error but don't fail - photo is already uploaded
+			fmt.Fprintf(os.Stderr, "Warning: Failed to set photo metadata: %v\n", err)
 		}
-		fmt.Fprintf(os.Stderr, "DEBUG: OAuth signature = %s\n", signature)
 	}
 	
-	// Build Authorization header
-	authHeader := u.buildAuthHeader(oauthParams)
-	
-	// Set headers
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.ContentLength = int64(buf.Len())
-	
-	// Make request
-	httpClient := &http.Client{}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("upload failed: %w", err)
-	}
-	defer resp.Body.Close()
-	
-	// Read response
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+	// Step 3: Set privacy if needed
+	if isPrivate {
+		if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Setting photo as private (photo_id: %s)\n", photoID)
+		}
+		if err := u.setPhotoPerms(ctx, photoID, false, false, false); err != nil {
+			// Log error but don't fail
+			fmt.Fprintf(os.Stderr, "Warning: Failed to set photo privacy: %v\n", err)
+		} else if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Successfully set photo as private\n")
+		}
 	}
 	
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, body)
-	}
-	
-	// Parse response to get photo ID
-	photoID := u.parsePhotoID(string(body))
-	if photoID == "" {
-		return nil, fmt.Errorf("failed to parse photo ID from response: %s", body)
-	}
-	
-	// Get the actual photo URL and sizes
+	// Get the photo info and URLs regardless of privacy setting
 	api := &FlickrAPI{FlickrUploader: u}
 	photoInfo, err := api.GetPhotoInfo(ctx, photoID)
 	if err != nil {
-		// Fall back to edit URL if we can't get photo info
+		// Fall back to basic URL if we can't get photo info
 		return &UploadResult{
 			PhotoID: photoID,
-			URL:     fmt.Sprintf("https://www.flickr.com/photos/upload/edit/?ids=%s", photoID),
+			URL:     fmt.Sprintf("https://www.flickr.com/photos/98806759@N00/%s", photoID),
 		}, nil
 	}
 	
@@ -209,25 +114,214 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 	}, nil
 }
 
-// buildAuthHeader builds the OAuth authorization header  
-func (u *FlickrUploader) buildAuthHeader(params map[string]string) string {
-	header := "OAuth "
-	first := true
+// uploadPhoto uploads just the photo file without any metadata
+func (u *FlickrUploader) uploadPhoto(ctx context.Context, imagePath string) (string, error) {
+	// Open the image file
+	file, err := os.Open(imagePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open image: %w", err)
+	}
+	defer file.Close()
 	
-	// Build header in a specific order for consistency
-	keys := []string{"oauth_consumer_key", "oauth_nonce", "oauth_signature", 
-		"oauth_signature_method", "oauth_timestamp", "oauth_token", "oauth_version"}
+	// Create multipart form
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
 	
-	for _, k := range keys {
-		if v, ok := params[k]; ok {
-			if !first {
-				header += ", "
-			}
-			header += fmt.Sprintf(`%s="%s"`, k, v)
-			first = false
+	// Add image file
+	part, err := writer.CreateFormFile("photo", filepath.Base(imagePath))
+	if err != nil {
+		return "", fmt.Errorf("failed to create form file: %w", err)
+	}
+	
+	if _, err := io.Copy(part, file); err != nil {
+		return "", fmt.Errorf("failed to copy file: %w", err)
+	}
+	
+	// Close the writer
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("failed to close writer: %w", err)
+	}
+	
+	// Create OAuth1 config and client
+	config := oauth1.Config{
+		ConsumerKey:    u.ConsumerKey,
+		ConsumerSecret: u.ConsumerSecret,
+	}
+	
+	token := oauth1.NewToken(u.AccessToken, u.AccessSecret)
+	httpClient := config.Client(ctx, token)
+	
+	// Create the request
+	req, err := http.NewRequestWithContext(ctx, "POST", flickrUploadURL, &buf)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// Set headers
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.ContentLength = int64(buf.Len())
+	
+	// Make request
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload failed: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+	
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, body)
+	}
+	
+	// Parse response to get photo ID
+	photoID := u.parsePhotoID(string(body))
+	if photoID == "" {
+		return "", fmt.Errorf("failed to parse photo ID from response: %s", body)
+	}
+	
+	// Check if response indicates an error
+	if strings.Contains(string(body), "stat=\"fail\"") || strings.Contains(string(body), "<err") {
+		return "", fmt.Errorf("upload failed - Flickr returned error: %s", body)
+	}
+	
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Photo uploaded successfully with ID: %s\n", photoID)
+		fmt.Fprintf(os.Stderr, "DEBUG: Full upload response: %s\n", string(body))
+	}
+	
+	return photoID, nil
+}
+
+// setPhotoMeta sets the title and description of a photo
+func (u *FlickrUploader) setPhotoMeta(ctx context.Context, photoID, title, description string) error {
+	// Build parameters
+	params := url.Values{
+		"method":         {"flickr.photos.setMeta"},
+		"photo_id":       {photoID},
+		"title":          {title},
+		"description":    {description},
+		"format":         {"json"},
+		"nojsoncallback": {"1"},
+	}
+	
+	// Make API call
+	resp, err := u.makeAPICall(ctx, "POST", params)
+	if err != nil {
+		return err
+	}
+	
+	// Parse response
+	var result struct {
+		Stat    string `json:"stat"`
+		Message string `json:"message,omitempty"`
+	}
+	
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+	
+	if result.Stat != "ok" {
+		return fmt.Errorf("API error: %s", result.Message)
+	}
+	
+	return nil
+}
+
+// setPhotoPerms sets the privacy settings of a photo
+func (u *FlickrUploader) setPhotoPerms(ctx context.Context, photoID string, isPublic, isFriend, isFamily bool) error {
+	// Build parameters
+	params := url.Values{
+		"method":         {"flickr.photos.setPerms"},
+		"photo_id":       {photoID},
+		"is_public":      {boolToString(isPublic)},
+		"is_friend":      {boolToString(isFriend)},
+		"is_family":      {boolToString(isFamily)},
+		"format":         {"json"},
+		"nojsoncallback": {"1"},
+	}
+	
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Calling flickr.photos.setPerms with params: %v\n", params)
+	}
+	
+	// Make API call
+	resp, err := u.makeAPICall(ctx, "POST", params)
+	if err != nil {
+		return err
+	}
+	
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: flickr.photos.setPerms response: %s\n", string(resp))
+	}
+	
+	// Parse response
+	var result struct {
+		Stat    string `json:"stat"`
+		Message string `json:"message,omitempty"`
+	}
+	
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+	
+	if result.Stat != "ok" {
+		return fmt.Errorf("API error: %s", result.Message)
+	}
+	
+	return nil
+}
+
+// makeAPICall makes an OAuth-signed API call
+func (u *FlickrUploader) makeAPICall(ctx context.Context, method string, params url.Values) ([]byte, error) {
+	// Create OAuth1 config and client
+	config := oauth1.Config{
+		ConsumerKey:    u.ConsumerKey,
+		ConsumerSecret: u.ConsumerSecret,
+	}
+	
+	token := oauth1.NewToken(u.AccessToken, u.AccessSecret)
+	httpClient := config.Client(ctx, token)
+	
+	// Create request
+	var req *http.Request
+	var err error
+	
+	if method == "POST" {
+		req, err = http.NewRequestWithContext(ctx, method, flickrAPIURL, strings.NewReader(params.Encode()))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	} else {
+		req, err = http.NewRequestWithContext(ctx, method, flickrAPIURL+"?"+params.Encode(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
 	}
-	return header
+	
+	// Make request
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
+	}
+	
+	return body, nil
 }
 
 // parsePhotoID extracts the photo ID from the upload response
@@ -248,4 +342,12 @@ func (u *FlickrUploader) parsePhotoID(response string) string {
 	}
 	
 	return response[startIdx : startIdx+endIdx]
+}
+
+// boolToString converts a bool to "1" or "0"
+func boolToString(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
 }

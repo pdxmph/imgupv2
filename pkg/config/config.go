@@ -26,7 +26,6 @@ func DefaultTemplates() map[string]string {
 	return map[string]string{
 		"markdown": "![%alt%|%description%|%title%|%filename%](%image_url%)",
 		"html":     `<img src="%image_url%" alt="%alt%|%description%|%title%|%filename%">`,
-		"edit_url": "%edit_url%",
 		"url":      "%url%",
 		"json":     `{"photo_id":"%photo_id%","url":"%url%","image_url":"%image_url%"}`,
 	}
