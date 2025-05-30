@@ -1,4 +1,4 @@
-module github.com/mph/imgupv2
+module github.com/pdxmph/imgupv2
 
 go 1.21
 
