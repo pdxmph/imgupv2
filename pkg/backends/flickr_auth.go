@@ -50,6 +50,9 @@ func (a *FlickrAuth) Authenticate(ctx context.Context) (*oauth1.Token, error) {
 		return nil, fmt.Errorf("failed to get authorization URL: %w", err)
 	}
 	
+	// Add perms parameter for write access
+	authorizationURL.RawQuery = authorizationURL.RawQuery + "&perms=write"
+	
 	fmt.Printf("\nPlease visit this URL to authorize the app:\n%s\n\n", authorizationURL.String())
 	
 	// Start callback server

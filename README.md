@@ -40,13 +40,14 @@ go install github.com/pdxmph/imgupv2@latest
 1. Visit [Flickr App Garden](https://www.flickr.com/services/apps/create/)
 2. Apply for a non-commercial key
 3. Note your Key and Secret
+4. Click "Edit auth flow for this app" and add the callback URL: `http://localhost:8749/callback`
 
 ### 2. Configure imgupv2
 
 ```bash
 # Add your API credentials
-imgup config set flickr.consumer_key YOUR_KEY
-imgup config set flickr.consumer_secret YOUR_SECRET
+imgup config set flickr.key YOUR_KEY
+imgup config set flickr.secret YOUR_SECRET
 
 # Authenticate with Flickr
 imgup auth flickr
@@ -133,19 +134,25 @@ Configuration is stored in `~/.config/imgupv2/config.json`.
 
 ```bash
 # Flickr API credentials
-imgup config set flickr.consumer_key YOUR_KEY
-imgup config set flickr.consumer_secret YOUR_SECRET
+imgup config set flickr.key YOUR_KEY
+imgup config set flickr.secret YOUR_SECRET
 
-# Default privacy settings
-imgup config set flickr.default_privacy.public false
-imgup config set flickr.default_privacy.friend true
-imgup config set flickr.default_privacy.family true
+# Custom output templates
+imgup config set template.custom "![%title%](%image_url%)"
 
 # List all settings
 imgup config list
 ```
 
 ## Troubleshooting
+
+### "Flickr doesn't recognise the permission set" error
+Make sure you've configured the callback URL in your Flickr app:
+1. Go to [Flickr App Garden](https://www.flickr.com/services/apps/)
+2. Click on your app
+3. Click "Edit auth flow for this app"  
+4. Add callback URL: `http://localhost:8749/callback`
+5. Save changes
 
 ### "401 Unauthorized" errors
 Your authentication token may have expired. Re-authenticate:
