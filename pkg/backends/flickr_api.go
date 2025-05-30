@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	
-	"github.com/mph/imgupv2/pkg/config"
+	"github.com/pdxmph/imgupv2/pkg/config"
 )
 
 // FlickrAPI handles Flickr API calls

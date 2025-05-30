@@ -7,9 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mph/imgupv2/pkg/config"
-	"github.com/mph/imgupv2/pkg/gui"
-	"github.com/mph/imgupv2/pkg/upload"
+	"github.com/pdxmph/imgupv2/pkg/config"
+	"github.com/pdxmph/imgupv2/pkg/gui"
+	"github.com/pdxmph/imgupv2/pkg/upload"
 )
 
 func guiServerCmd(args []string) {

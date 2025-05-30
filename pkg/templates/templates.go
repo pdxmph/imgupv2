@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 	
-	"github.com/mph/imgupv2/pkg/backends"
+	"github.com/pdxmph/imgupv2/pkg/backends"
 )
 
 // Variables holds all the available template variables

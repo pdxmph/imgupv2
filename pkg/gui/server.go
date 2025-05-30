@@ -10,9 +10,9 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/mph/imgupv2/pkg/config"
-	"github.com/mph/imgupv2/pkg/metadata"
-	"github.com/mph/imgupv2/pkg/upload"
+	"github.com/pdxmph/imgupv2/pkg/config"
+	"github.com/pdxmph/imgupv2/pkg/metadata"
+	"github.com/pdxmph/imgupv2/pkg/upload"
 )
 
 // Server handles GUI protocol communication

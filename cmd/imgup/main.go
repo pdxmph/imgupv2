@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/mph/imgupv2/pkg/backends"
-	"github.com/mph/imgupv2/pkg/config"
-	"github.com/mph/imgupv2/pkg/metadata"
-	"github.com/mph/imgupv2/pkg/templates"
+	"github.com/pdxmph/imgupv2/pkg/backends"
+	"github.com/pdxmph/imgupv2/pkg/config"
+	"github.com/pdxmph/imgupv2/pkg/metadata"
+	"github.com/pdxmph/imgupv2/pkg/templates"
 )
 
 var (
