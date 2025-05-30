@@ -1,0 +1,21 @@
+# Wails build output
+build/
+imgupv2-gui
+
+# Go dependencies
+vendor/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Wails generated files
+frontend/dist/wailsjs/
+frontend/node_modules/

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>imgupv2</title>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+    <div id="app">
+        <form id="upload-form">
+            <div id="preview-container" class="hidden">
+                <img id="preview" src="" alt="Preview">
+            </div>
+            
+            <div class="field">
+                <label for="title">Title</label>
+                <input type="text" id="title" name="title" autofocus>
+            </div>
+            
+            <div class="field">
+                <label for="caption">Caption/Alt Text</label>
+                <textarea id="caption" name="caption" rows="3"></textarea>
+            </div>
+            
+            <div class="field">
+                <label for="tags">Tags</label>
+                <input type="text" id="tags" name="tags" 
+                       placeholder="space-separated tags">
+                <div id="tag-suggestions" class="suggestions hidden"></div>
+            </div>
+            
+            <div class="options">
+                <div class="field-inline">
+                    <label>Backend:</label>
+                    <select id="backend">
+                        <option value="flickr">Flickr</option>
+                        <option value="smugmug">SmugMug</option>
+                    </select>
+                </div>
+                
+                <div class="field-inline">
+                    <label>Format:</label>
+                    <select id="format">
+                        <option value="markdown">Markdown</option>
+                        <option value="html">HTML</option>
+                        <option value="org">Org-mode</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="buttons">
+                <button type="submit" id="upload-btn">Upload</button>
+                <button type="button" id="cancel-btn">Cancel</button>
+            </div>
+            
+            <div id="progress" class="hidden">
+                <div class="spinner"></div>
+                <span>Uploading...</span>
+            </div>
+            
+            <div id="error-message" class="error hidden"></div>
+            <div id="success-message" class="success hidden"></div>
+        </form>
+    </div>
+    
+    <script src="./main.js"></script>
+</body>
+</html>

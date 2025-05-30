@@ -1,0 +1,32 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "imgupv2-gui",
+  "outputfilename": "imgupv2-gui",
+  "frontend:install": "npm install",
+  "frontend:build": "",
+  "frontend:dev": "",
+  "frontend:dev:watcher": "",
+  "author": {
+    "name": "mph",
+    "email": ""
+  },
+  "info": {
+    "companyName": "",
+    "productName": "imgupv2 GUI",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright 2024",
+    "comments": "A fast image upload tool for photographers"
+  },
+  "debounceMS": 100,
+  "devServer": "localhost:34115",
+  "appargs": "",
+  "runNonNativeBuildHooks": false,
+  "preBuildHooks": {},
+  "postBuildHooks": {},
+  "frontend:dev:serverUrl": "auto",
+  "bindings": {
+    "prefix": "",
+    "suffix": "",
+    "typescript": false
+  }
+}
