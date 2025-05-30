@@ -30,7 +30,7 @@ sudo mv imgup /usr/local/bin/
 Requires Go 1.20 or later:
 
 ```bash
-go install github.com/pdxmph/imgupv2@latest
+go install github.com/pdxmph/imgupv2/cmd/imgup@latest
 ```
 
 ## Quick Start
