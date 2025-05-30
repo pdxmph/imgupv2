@@ -30,7 +30,20 @@ sudo mv imgup /usr/local/bin/
 Requires Go 1.20 or later:
 
 ```bash
-go install github.com/pdxmph/imgupv2/cmd/imgup@latest
+go install github.com/pdxmph/imgupv2/cmd/imgup@v0.1.1
+```
+
+**Note:** After installing with `go install`, the binary will be in `~/go/bin/`. Make sure this is in your PATH:
+
+```bash
+# Add to your ~/.zshrc or ~/.bashrc
+export PATH="$HOME/go/bin:$PATH"
+
+# Reload your shell config
+source ~/.zshrc  # or source ~/.bashrc
+
+# Verify installation
+which imgup
 ```
 
 ## Quick Start
