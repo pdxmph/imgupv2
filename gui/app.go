@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
@@ -44,6 +46,24 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	
+	// Show the window initially if a photo is selected
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		metadata, err := a.GetSelectedPhoto()
+		if err == nil && metadata.Path != "" {
+			// Photo is selected, show the window
+			wailsRuntime.WindowShow(a.ctx)
+		} else {
+			// No photo selected, show window anyway with a message
+			wailsRuntime.WindowShow(a.ctx)
+		}
+	}()
+}
+
+// shutdown is called when the app is closing
+func (a *App) shutdown(ctx context.Context) {
+	// Cleanup if needed
 }
 
 // GetSelectedPhoto gets the currently selected photo from Finder/Photos
@@ -189,8 +209,8 @@ func (a *App) getPhotoFromPhotosApp() (*PhotoMetadata, error) {
 			end repeat
 		end try
 		
-		-- Export with originals
-		export {photo} to (POSIX file tempFolder) with using originals
+		-- Export with most recent edits as JPEG
+		export {photo} to (POSIX file tempFolder)
 		
 		-- Build result string with delimiters
 		set exportResult to "TITLE:" & pTitle & "|DESC:" & pDesc & "|KEYWORDS:"
@@ -345,10 +365,22 @@ func (a *App) Upload(metadata PhotoMetadata) (*UploadResult, error) {
 	// Add the file path at the end
 	args = append(args, metadata.Path)
 
-	// Find imgup binary - first check if it's in the parent directory
+	// Find imgup binary - check multiple locations
 	imgupPath := "imgup"
-	if parentImgup := filepath.Join("..", "imgup"); fileExists(parentImgup) {
-		imgupPath = parentImgup
+	
+	// Check common locations in order of preference
+	searchPaths := []string{
+		filepath.Join(os.Getenv("HOME"), "go", "bin", "imgup"),  // ~/go/bin/imgup
+		filepath.Join("..", "imgup"),                             // parent directory (for development)
+		"/usr/local/bin/imgup",                                   // homebrew location
+		"imgup",                                                  // rely on PATH
+	}
+	
+	for _, path := range searchPaths {
+		if fileExists(path) {
+			imgupPath = path
+			break
+		}
 	}
 
 	// Run imgup CLI

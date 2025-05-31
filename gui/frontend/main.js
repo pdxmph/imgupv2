@@ -3,30 +3,8 @@ let currentPhotoMetadata = null;
 
 // Initialize on DOM ready
 document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        // Load selected photo metadata
-        const metadata = await window.go.main.App.GetSelectedPhoto();
-        if (metadata && metadata.path) {
-            currentPhotoMetadata = metadata;
-            populateForm(metadata);
-            loadPreview(metadata.path);
-            
-            // Show a note if this is from Photos
-            if (metadata.isTemporary) {
-                showInfo('Photo exported from Photos.app with metadata preserved');
-            }
-        } else {
-            showError('No photo selected in Finder or Photos');
-            setTimeout(() => {
-                window.runtime.Quit();
-            }, 2000);
-            return;
-        }
-    } catch (err) {
-        console.error('Failed to get selection:', err);
-        showError('Failed to get selected photo: ' + err);
-        return;
-    }
+    // Initial load
+    await loadSelectedPhoto();
     
     // Set up tag autocomplete
     setupTagAutocomplete();
@@ -54,6 +32,41 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 });
+
+// Extract photo loading logic into a separate function
+async function loadSelectedPhoto() {
+    try {
+        // Clear any previous errors
+        document.getElementById('error-message').classList.add('hidden');
+        document.getElementById('success-message').classList.add('hidden');
+        
+        // Show the form
+        document.getElementById('upload-form').classList.remove('hidden');
+        
+        // Load selected photo metadata
+        const metadata = await window.go.main.App.GetSelectedPhoto();
+        if (metadata && metadata.path) {
+            currentPhotoMetadata = metadata;
+            populateForm(metadata);
+            loadPreview(metadata.path);
+            
+            // Show a note if this is from Photos
+            if (metadata.isTemporary) {
+                showInfo('Photo exported from Photos.app with metadata preserved');
+            }
+            
+            // Focus on first editable field
+            document.getElementById('title').focus();
+        } else {
+            showError('No photo selected in Finder or Photos. Please select a photo and relaunch.');
+            document.getElementById('upload-form').classList.add('hidden');
+        }
+    } catch (err) {
+        console.error('Failed to get selection:', err);
+        showError('Failed to get selected photo: ' + err);
+        document.getElementById('upload-form').classList.add('hidden');
+    }
+}
 
 function populateForm(metadata) {
     document.getElementById('title').value = metadata.title || '';
