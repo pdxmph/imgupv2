@@ -22,6 +22,21 @@ cd gui && ~/go/bin/wails build -clean
 cp -r build/bin/imgupv2-gui.app "../${RELEASE_DIR}/"
 cd ..
 
+# Build the hotkey app
+echo "Building hotkey daemon..."
+cd gui/hotkey
+go build -o imgupv2-hotkey main.go
+# Ensure the app bundle exists
+if [ ! -d "imgupv2-hotkey.app" ]; then
+    echo "Error: imgupv2-hotkey.app bundle not found"
+    exit 1
+fi
+# Copy the binary into the app bundle
+cp imgupv2-hotkey imgupv2-hotkey.app/Contents/MacOS/
+# Copy the complete app bundle to release
+cp -r imgupv2-hotkey.app "../../${RELEASE_DIR}/"
+cd ../..
+
 # Create the archive
 echo "Creating archive..."
 cd dist
