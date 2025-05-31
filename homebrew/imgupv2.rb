@@ -1,6 +1,6 @@
 cask "imgupv2" do
   version "0.3.0"
-  sha256 "d5de6c841732b084f8db481bde8ac7b904897d06d474167d9d69287b75242004"
+  sha256 "f831b2d50c88d119dc2980d1fee66bcefce3675560b8b53ae078cf1bb1c19bf6"
 
   url "https://github.com/pdxmph/imgupv2/releases/download/v#{version}/imgupv2-v#{version}-macOS.tar.gz"
   name "imgupv2"
@@ -47,8 +47,5 @@ cask "imgupv2" do
   caveats <<~EOS
     The imgupv2 CLI tool has been installed to:
       #{HOMEBREW_PREFIX}/bin/imgup
-
-    The first time you run the apps or CLI, macOS may show a security warning.
-    You can allow them in System Settings > Privacy & Security.
   EOS
 end
