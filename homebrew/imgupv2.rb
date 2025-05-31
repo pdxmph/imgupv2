@@ -31,15 +31,6 @@ cask "imgupv2" do
     ohai ""
     ohai "To add it to Login Items:"
     ohai "  System Settings > General > Login Items"
-  end add an app"
-    ohai "3. Navigate to /Applications and select imgupv2-hotkey.app"
-    ohai "4. Make sure the toggle is enabled"
-    ohai ""
-    ohai "To start the hotkey daemon:"
-    ohai "  open -a 'imgupv2-hotkey'"
-    ohai ""
-    ohai "To add it to Login Items:"
-    ohai "  System Settings > General > Login Items"
   end
 
   uninstall quit: [
