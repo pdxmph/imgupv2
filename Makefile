@@ -5,7 +5,7 @@ all: build
 
 # Build the binary
 build:
-	go build -o imgup cmd/imgup/main.go
+	cd cmd/imgup && go build -ldflags "-X 'main.version=$$(git describe --tags --always --dirty)' -X 'main.commit=$$(git rev-parse --short HEAD)' -X 'main.date=$$(date -u +%Y-%m-%dT%H:%M:%SZ)'" -o ../../imgup .
 
 # Run tests
 test:

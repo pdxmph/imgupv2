@@ -14,6 +14,11 @@ import (
 )
 
 var (
+	// Version information (set by ldflags during build)
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+
 	// Upload flags
 	title        string
 	description  string
@@ -24,12 +29,28 @@ var (
 )
 
 func main() {
+	var showVersion bool
+	
 	rootCmd := &cobra.Command{
-		Use:   "imgup",
-		Short: "Fast image upload tool",
+		Use:     "imgup",
+		Short:   "Fast image upload tool",
 		Long: `imgupv2 - A fast command-line tool for uploading images to Flickr
 with support for metadata embedding and multiple output formats.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if showVersion {
+				fmt.Printf("imgupv2 version %s\n", version)
+				if version != "dev" {
+					fmt.Printf("  commit: %s\n", commit)
+					fmt.Printf("  built:  %s\n", date)
+				}
+				return nil
+			}
+			// Show help if no subcommand is provided
+			return cmd.Help()
+		},
 	}
+	
+	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "version for imgup")
 
 	// Auth command
 	authCmd := &cobra.Command{
@@ -76,8 +97,21 @@ with support for metadata embedding and multiple output formats.`,
 
 	configCmd.AddCommand(configShowCmd, configSetCmd)
 
+	// Version command
+	versionCmd := &cobra.Command{
+		Use:   "version",
+		Short: "Show version information",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("imgupv2 version %s\n", version)
+			if version != "dev" {
+				fmt.Printf("  commit: %s\n", commit)
+				fmt.Printf("  built:  %s\n", date)
+			}
+		},
+	}
+
 	// Add commands to root
-	rootCmd.AddCommand(authCmd, uploadCmd, configCmd)
+	rootCmd.AddCommand(authCmd, uploadCmd, configCmd, versionCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
