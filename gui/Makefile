@@ -21,21 +21,43 @@ clean:
 	rm -rf build/bin
 	rm -f imgupv2-gui
 
-# Install to /usr/local/bin (macOS) or appropriate location
-install: build
+# Install to user locations (no sudo required)
+install: build install-icons
 	@if [ -f build/bin/imgupv2-gui.app/Contents/MacOS/imgupv2-gui ]; then \
-		echo "Installing macOS app..."; \
-		cp -r build/bin/imgupv2-gui.app /Applications/; \
+		echo "Installing macOS app to ~/Applications..."; \
+		mkdir -p ~/Applications; \
+		cp -r build/bin/imgupv2-gui.app ~/Applications/; \
 		echo "Creating command line launcher..."; \
-		echo '#!/bin/bash\n/Applications/imgupv2-gui.app/Contents/MacOS/imgupv2-gui' > /usr/local/bin/imgupv2-gui; \
-		chmod +x /usr/local/bin/imgupv2-gui; \
+		mkdir -p ~/bin; \
+		echo '#!/bin/bash' > ~/bin/imgupv2-gui; \
+		echo 'exec ~/Applications/imgupv2-gui.app/Contents/MacOS/imgupv2-gui "$$@"' >> ~/bin/imgupv2-gui; \
+		chmod +x ~/bin/imgupv2-gui; \
+		echo "✓ GUI installed to ~/Applications/imgupv2-gui.app"; \
+		echo "✓ CLI launcher at ~/bin/imgupv2-gui (add ~/bin to PATH if needed)"; \
 	elif [ -f build/bin/imgupv2-gui ]; then \
 		echo "Installing Linux binary..."; \
-		sudo cp build/bin/imgupv2-gui /usr/local/bin/; \
+		mkdir -p ~/bin; \
+		cp build/bin/imgupv2-gui ~/bin/; \
+		chmod +x ~/bin/imgupv2-gui; \
 	fi
 
-# Create a macOS service
-service-mac:
-	@echo "Creating Quick Action for macOS..."
-	@echo "Please use Automator to create a Quick Action that runs:"
-	@echo "/Applications/imgupv2-gui.app/Contents/MacOS/imgupv2-gui"
+# Apply custom icons after build
+install-icons:
+	@if [ -f build/appicon.icns ] && [ -f build/bin/imgupv2-gui.app/Contents/Resources/iconfile.icns ]; then \
+		echo "Applying custom GUI icon..."; \
+		cp build/appicon.icns build/bin/imgupv2-gui.app/Contents/Resources/iconfile.icns; \
+	fi
+
+# Install hotkey daemon
+install-hotkey:
+	@echo "Building hotkey daemon..."
+	@cd hotkey && go build -o imgupv2-hotkey main.go
+	@cd hotkey && cp imgupv2-hotkey imgupv2-hotkey.app/Contents/MacOS/
+	@cd hotkey && chmod +x imgupv2-hotkey.app/Contents/MacOS/imgupv2-hotkey
+	@echo "Installing hotkey daemon to ~/Applications..."
+	@mkdir -p ~/Applications
+	@cp -r hotkey/imgupv2-hotkey.app ~/Applications/
+	@echo "✓ Hotkey daemon installed to ~/Applications/imgupv2-hotkey.app"
+
+# Install everything
+install-all: install install-hotkey

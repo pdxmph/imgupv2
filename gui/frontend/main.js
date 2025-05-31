@@ -57,9 +57,57 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 });
 
+// Add this function to watch for metadata population
+function watchForMetadata() {
+    const overlay = document.getElementById('loading-overlay');
+    const fieldsToWatch = ['title', 'alt', 'description', 'tags'];
+    let hasMetadata = false;
+    
+    // Check if any fields have content
+    const checkFields = () => {
+        for (const fieldId of fieldsToWatch) {
+            const field = document.getElementById(fieldId);
+            if (field && field.value.trim()) {
+                hasMetadata = true;
+                break;
+            }
+        }
+        
+        if (hasMetadata) {
+            // Fade out the overlay
+            overlay.classList.add('fade-out');
+            // Remove after transition
+            setTimeout(() => {
+                overlay.style.display = 'none';
+            }, 300);
+            return true; // Stop checking
+        }
+        return false;
+    };
+    
+    // Check periodically for metadata
+    const checkInterval = setInterval(() => {
+        if (checkFields()) {
+            clearInterval(checkInterval);
+        }
+    }, 100);
+    
+    // Fallback: hide after 5 seconds regardless
+    setTimeout(() => {
+        clearInterval(checkInterval);
+        overlay.classList.add('fade-out');
+        setTimeout(() => {
+            overlay.style.display = 'none';
+        }, 300);
+    }, 5000);
+}
+
 // Extract photo loading logic into a separate function
 async function loadSelectedPhoto() {
     try {
+        // Start watching for metadata immediately
+        watchForMetadata();
+        
         // Clear any previous errors
         document.getElementById('error-message').classList.add('hidden');
         document.getElementById('success-message').classList.add('hidden');
@@ -82,10 +130,18 @@ async function loadSelectedPhoto() {
             // Focus on first editable field
             document.getElementById('title').focus();
         } else {
+            // Hide overlay on error
+            const overlay = document.getElementById('loading-overlay');
+            overlay.style.display = 'none';
+            
             showError('No photo selected in Finder or Photos. Please select a photo and relaunch.');
             document.getElementById('upload-form').classList.add('hidden');
         }
     } catch (err) {
+        // Hide overlay on error
+        const overlay = document.getElementById('loading-overlay');
+        overlay.style.display = 'none';
+        
         console.error('Failed to get selection:', err);
         showError('Failed to get selected photo: ' + err);
         document.getElementById('upload-form').classList.add('hidden');

@@ -4,7 +4,7 @@
   "description": "Frontend for imgupv2 GUI",
   "main": "index.html",
   "scripts": {
-    "build": "echo 'No build step required'",
+    "build": "cp index.html main.js style.css dist/ && cp -r wailsjs dist/",
     "dev": "echo 'No dev server required'"
   }
 }
