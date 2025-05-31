@@ -11,15 +11,9 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
     goarch:
       - amd64
       - arm64
-    # Skip darwin/arm64 builds on non-arm64 machines
-    ignore:
-      - goos: darwin
-        goarch: arm64
-        # Only build on arm64 machines
     main: ./cmd/imgup
     binary: imgup
     ldflags:
