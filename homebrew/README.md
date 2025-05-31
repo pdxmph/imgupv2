@@ -12,24 +12,15 @@ brew install --cask imgupv2
 
 This will install:
 - The imgupv2 GUI app
-- The imgupv2 hotkey daemon
 - The imgup CLI tool
 
 ### Post-Installation Setup
 
-1. **Enable Global Hotkey (Option+Shift+I)**:
-   - Open System Preferences > Security & Privacy > Privacy > Accessibility
-   - Add `imgupv2-hotkey.app` to the list
-   - Make sure it's checked
-
-2. **Start the Hotkey Daemon**:
-   ```bash
-   open -a 'imgupv2-hotkey'
-   ```
-
-3. **Optional: Add to Login Items**:
-   - System Preferences > Users & Groups > Login Items
-   - Add `imgupv2-hotkey.app`
+**For Quick Access**, create a keyboard shortcut:
+1. Open Shortcuts.app
+2. Create new shortcut with 'Run Shell Script' action
+3. Enter: `open -a imgupv2-gui`
+4. Add keyboard shortcut (e.g., ⌘⇧U)
 
 ## For Development
 
@@ -42,10 +33,6 @@ This will install:
    
    # Build GUI (from gui/ directory)
    wails build
-   
-   # Build hotkey daemon (from gui/hotkey/ directory)
-   go build -o imgupv2-hotkey .
-   # Then create .app bundle...
    ```
 
 2. Run the distribution build script:
@@ -87,7 +74,6 @@ Once tested and working:
 
 The Cask installs:
 - `/Applications/imgupv2-gui.app` - Main GUI application
-- `/Applications/imgupv2-hotkey.app` - Global hotkey daemon
 - `/usr/local/bin/imgup` - CLI tool (symlinked)
 
 Uninstalling removes all components and can optionally clean up preferences/logs.

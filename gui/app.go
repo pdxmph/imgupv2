@@ -52,15 +52,18 @@ func (a *App) startup(ctx context.Context) {
 	
 	// Show the window initially if a photo is selected
 	go func() {
-		time.Sleep(500 * time.Millisecond)
-		metadata, err := a.GetSelectedPhoto()
-		if err == nil && metadata.Path != "" {
-			// Photo is selected, show the window
-			wailsRuntime.WindowShow(a.ctx)
-		} else {
-			// No photo selected, show window anyway with a message
-			wailsRuntime.WindowShow(a.ctx)
+		// Try a few times with delays to handle launch timing issues
+		for i := 0; i < 3; i++ {
+			time.Sleep(time.Duration(500+i*250) * time.Millisecond)
+			metadata, err := a.GetSelectedPhoto()
+			if err == nil && metadata.Path != "" {
+				// Photo is selected, show the window
+				wailsRuntime.WindowShow(a.ctx)
+				return
+			}
 		}
+		// No photo selected after retries, show window anyway with a message
+		wailsRuntime.WindowShow(a.ctx)
 	}()
 }
 
@@ -148,7 +151,17 @@ func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
 	}
 
 	// Run exiftool to get title/caption/keywords
-	cmd := exec.Command("exiftool", "-json", "-Title", "-Caption-Abstract", "-Subject", path)
+	// Use full path to exiftool to avoid PATH issues
+	exiftoolPath := "/usr/local/bin/exiftool"
+	if _, err := os.Stat(exiftoolPath); err != nil {
+		// Try homebrew location
+		exiftoolPath = "/opt/homebrew/bin/exiftool"
+		if _, err := os.Stat(exiftoolPath); err != nil {
+			// Fall back to PATH
+			exiftoolPath = "exiftool"
+		}
+	}
+	cmd := exec.Command(exiftoolPath, "-json", "-Title", "-Caption-Abstract", "-Subject", path)
 	if out, err := cmd.Output(); err == nil {
 		var exifData []map[string]interface{}
 		if err := json.Unmarshal(out, &exifData); err == nil && len(exifData) > 0 {
@@ -397,7 +410,8 @@ func (a *App) Upload(metadata PhotoMetadata) (*UploadResult, error) {
 	searchPaths := []string{
 		filepath.Join(os.Getenv("HOME"), "go", "bin", "imgup"),  // ~/go/bin/imgup
 		filepath.Join("..", "imgup"),                             // parent directory (for development)
-		"/usr/local/bin/imgup",                                   // homebrew location
+		"/opt/homebrew/bin/imgup",                               // Apple Silicon homebrew
+		"/usr/local/bin/imgup",                                   // Intel homebrew
 		"imgup",                                                  // rely on PATH
 	}
 	

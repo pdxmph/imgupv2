@@ -24,12 +24,10 @@ codesign --force --deep --sign - imgup
 echo "Copying components..."
 cp imgup "$DIST_DIR/"
 cp -R gui/build/bin/imgupv2-gui.app "$DIST_DIR/"
-cp -R gui/hotkey/imgupv2-hotkey.app "$DIST_DIR/"
 
 # Sign the apps (they should already be signed by Wails, but let's make sure)
 echo "Signing apps..."
 codesign --force --deep --sign - "$DIST_DIR/imgupv2-gui.app"
-codesign --force --deep --sign - "$DIST_DIR/imgupv2-hotkey.app"
 
 # Create the tarball
 echo "Creating tarball..."

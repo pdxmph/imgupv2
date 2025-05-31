@@ -22,7 +22,7 @@ The main build script now handles signing and notarization automatically:
 ```
 
 This will:
-1. Build all three components (CLI, GUI, hotkey app)
+1. Build both components (CLI, GUI)
 2. Sign each component with your Developer ID
 3. Create the release archive
 4. Notarize the archive with Apple

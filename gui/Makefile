@@ -47,17 +47,3 @@ install-icons:
 		echo "Applying custom GUI icon..."; \
 		cp build/appicon.icns build/bin/imgupv2-gui.app/Contents/Resources/iconfile.icns; \
 	fi
-
-# Install hotkey daemon
-install-hotkey:
-	@echo "Building hotkey daemon..."
-	@cd hotkey && go build -o imgupv2-hotkey main.go
-	@cd hotkey && cp imgupv2-hotkey imgupv2-hotkey.app/Contents/MacOS/
-	@cd hotkey && chmod +x imgupv2-hotkey.app/Contents/MacOS/imgupv2-hotkey
-	@echo "Installing hotkey daemon to ~/Applications..."
-	@mkdir -p ~/Applications
-	@cp -r hotkey/imgupv2-hotkey.app ~/Applications/
-	@echo "✓ Hotkey daemon installed to ~/Applications/imgupv2-hotkey.app"
-
-# Install everything
-install-all: install install-hotkey

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="v0.3.2"
+VERSION="v0.4.0"
 RELEASE_NAME="imgupv2-${VERSION}-macOS"
 RELEASE_DIR="dist/${RELEASE_NAME}"
 
@@ -10,6 +10,28 @@ SIGNING_IDENTITY="Developer ID Application: Michael Hall (WS4GXJ44LJ)"
 ENTITLEMENTS="build-support/entitlements.plist"
 
 echo "Building macOS release ${VERSION}..."
+
+# Find wails binary - check multiple locations
+WAILS_PATH=""
+WAILS_SEARCH_PATHS=(
+  "/opt/homebrew/bin/wails"     # Apple Silicon Homebrew
+  "/usr/local/bin/wails"         # Intel Homebrew
+  "$HOME/go/bin/wails"          # Go install fallback
+  "wails"                        # PATH fallback
+)
+
+for path in "${WAILS_SEARCH_PATHS[@]}"; do
+  if command -v "$path" &> /dev/null || [ -f "$path" ]; then
+    WAILS_PATH="$path"
+    echo "Found wails at: $WAILS_PATH"
+    break
+  fi
+done
+
+if [ -z "$WAILS_PATH" ]; then
+  echo "Error: wails not found. Please install via 'brew install wails' or 'go install github.com/wailsapp/wails/v2/cmd/wails@latest'"
+  exit 1
+fi
 
 # Clean up any existing release directory
 rm -rf "${RELEASE_DIR}"
@@ -30,7 +52,14 @@ codesign --deep --force --verify --verbose \
 
 # Build the GUI app
 echo "Building GUI..."
-cd gui && ~/go/bin/wails build -clean
+cd gui && "$WAILS_PATH" build -clean
+
+# Apply custom GUI icon
+if [ -f build/appicon.icns ]; then
+    echo "Applying custom GUI icon..."
+    cp build/appicon.icns build/bin/imgupv2-gui.app/Contents/Resources/iconfile.icns
+fi
+
 cp -r build/bin/imgupv2-gui.app "../${RELEASE_DIR}/"
 cd ..
 
@@ -41,29 +70,6 @@ codesign --deep --force --verify --verbose \
   --options runtime \
   --entitlements build-support/entitlements.plist \
   "${RELEASE_DIR}/imgupv2-gui.app"
-
-# Build the hotkey app
-echo "Building hotkey daemon..."
-cd gui/hotkey
-go build -o imgupv2-hotkey main.go
-# Ensure the app bundle exists
-if [ ! -d "imgupv2-hotkey.app" ]; then
-    echo "Error: imgupv2-hotkey.app bundle not found"
-    exit 1
-fi
-# Copy the binary into the app bundle
-cp imgupv2-hotkey imgupv2-hotkey.app/Contents/MacOS/
-# Copy the complete app bundle to release
-cp -r imgupv2-hotkey.app "../../${RELEASE_DIR}/"
-cd ../..
-
-# Sign the hotkey app
-echo "Signing hotkey app..."
-codesign --deep --force --verify --verbose \
-  --sign "${SIGNING_IDENTITY}" \
-  --options runtime \
-  --entitlements build-support/entitlements.plist \
-  "${RELEASE_DIR}/imgupv2-hotkey.app"
 
 # Create a temporary zip for notarization
 echo "Creating temporary zip for notarization..."
@@ -85,7 +91,6 @@ rm "dist/${RELEASE_NAME}-notarize.zip"
 # Staple the notarization to the apps
 echo "Stapling notarization tickets..."
 xcrun stapler staple "${RELEASE_DIR}/imgupv2-gui.app"
-xcrun stapler staple "${RELEASE_DIR}/imgupv2-hotkey.app"
 # Note: Can't staple CLI binaries, only app bundles
 
 # Create the final archive for distribution
