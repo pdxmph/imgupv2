@@ -1,11 +1,11 @@
 cask "imgupv2" do
-  version "0.2.0"
-  sha256 "5c750982144937b508c4c6f3b8e734a7e9702b240b81f3b718d2446a4c4e2416"
+  version "0.2.1"
+  sha256 "2b3bccbcd8c817cea88b72d4538d4742e4e081c14829a24471a3958d25283d3a"
 
   url "https://github.com/pdxmph/imgupv2/releases/download/v#{version}/imgupv2-#{version}-macOS.tar.gz"
   name "imgupv2"
   desc "Fast image uploader for Flickr with metadata review"
-  homepage "https://github.com/YOURUSERNAME/imgupv2"
+  homepage "https://github.com/pdxmph/imgupv2"
 
   depends_on macos: ">= :monterey"
 
