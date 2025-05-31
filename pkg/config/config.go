@@ -10,6 +10,7 @@ import (
 // Config holds the application configuration
 type Config struct {
 	Flickr    FlickrConfig          `json:"flickr"`
+	Mastodon  MastodonConfig        `json:"mastodon"`
 	Templates map[string]string     `json:"templates,omitempty"`
 }
 
@@ -19,6 +20,14 @@ type FlickrConfig struct {
 	ConsumerSecret string `json:"consumer_secret"`
 	AccessToken    string `json:"access_token,omitempty"`
 	AccessSecret   string `json:"access_secret,omitempty"`
+}
+
+// MastodonConfig holds Mastodon-specific configuration
+type MastodonConfig struct {
+	InstanceURL  string `json:"instance_url"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	AccessToken  string `json:"access_token,omitempty"`
 }
 
 // DefaultTemplates returns the default output templates

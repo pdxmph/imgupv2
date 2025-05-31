@@ -21,13 +21,16 @@ type App struct {
 
 // PhotoMetadata represents the metadata for a photo
 type PhotoMetadata struct {
-	Path        string   `json:"path"`
-	Title       string   `json:"title"`
-	Alt         string   `json:"alt"`         // Alt text, not caption
-	Description string   `json:"description"` // Photo description
-	Tags        []string `json:"tags"`
-	Format      string   `json:"format"` // "url", "markdown", "html", "json"
-	Private     bool     `json:"private"`
+	Path               string   `json:"path"`
+	Title              string   `json:"title"`
+	Alt                string   `json:"alt"`         // Alt text, not caption
+	Description        string   `json:"description"` // Photo description
+	Tags               []string `json:"tags"`
+	Format             string   `json:"format"` // "url", "markdown", "html", "json"
+	Private            bool     `json:"private"`
+	MastodonEnabled    bool     `json:"mastodonEnabled"`
+	MastodonText       string   `json:"mastodonText"`
+	MastodonVisibility string   `json:"mastodonVisibility"`
 }
 
 // UploadResult represents the result of an upload operation
@@ -64,6 +67,15 @@ func (a *App) startup(ctx context.Context) {
 // shutdown is called when the app is closing
 func (a *App) shutdown(ctx context.Context) {
 	// Cleanup if needed
+}
+
+// ResizeWindow adjusts the window height based on whether Mastodon options are shown
+func (a *App) ResizeWindow(showMastodon bool) {
+	if showMastodon {
+		wailsRuntime.WindowSetSize(a.ctx, 580, 660)
+	} else {
+		wailsRuntime.WindowSetSize(a.ctx, 580, 510)
+	}
 }
 
 // GetSelectedPhoto gets the currently selected photo from Finder/Photos
@@ -360,6 +372,19 @@ func (a *App) Upload(metadata PhotoMetadata) (*UploadResult, error) {
 	// Add private flag if set
 	if metadata.Private {
 		args = append(args, "--private")
+	}
+	
+	// Add Mastodon flags if enabled
+	if metadata.MastodonEnabled {
+		args = append(args, "--mastodon")
+		
+		if metadata.MastodonText != "" {
+			args = append(args, "--post", metadata.MastodonText)
+		}
+		
+		if metadata.MastodonVisibility != "" {
+			args = append(args, "--visibility", metadata.MastodonVisibility)
+		}
 	}
 
 	// Add the file path at the end

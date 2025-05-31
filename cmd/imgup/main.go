@@ -2,14 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/pdxmph/imgupv2/pkg/backends"
 	"github.com/pdxmph/imgupv2/pkg/config"
 	"github.com/pdxmph/imgupv2/pkg/metadata"
+	"github.com/pdxmph/imgupv2/pkg/services/mastodon"
 	"github.com/pdxmph/imgupv2/pkg/templates"
 )
 
@@ -26,6 +31,11 @@ var (
 	outputFormat string
 	isPrivate    bool
 	tags         []string
+	
+	// Mastodon flags
+	postToMastodon   bool
+	post             string
+	visibility       string
 )
 
 func main() {
@@ -75,6 +85,11 @@ with support for metadata embedding and multiple output formats.`,
 	uploadCmd.Flags().StringVar(&outputFormat, "format", "url", "Output format: url, markdown, html, json")
 	uploadCmd.Flags().BoolVar(&isPrivate, "private", false, "Make the photo private")
 	uploadCmd.Flags().StringSliceVar(&tags, "tags", nil, "Comma-separated tags")
+	
+	// Add Mastodon flags
+	uploadCmd.Flags().BoolVar(&postToMastodon, "mastodon", false, "Post to Mastodon after upload")
+	uploadCmd.Flags().StringVar(&post, "post", "", "Text for Mastodon post")
+	uploadCmd.Flags().StringVar(&visibility, "visibility", "public", "Mastodon post visibility: public, unlisted, followers, direct")
 
 	// Config command
 	configCmd := &cobra.Command{
@@ -126,6 +141,11 @@ func authCommand(cmd *cobra.Command, args []string) {
 			fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
 			os.Exit(1)
 		}
+	case "mastodon":
+		if err := authMastodon(); err != nil {
+			fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown service: %s\n", service)
 		os.Exit(1)
@@ -171,6 +191,179 @@ func authFlickr() error {
 	}
 
 	fmt.Println("Tokens saved to config!")
+	return nil
+}
+
+func authMastodon() error {
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Check if we have instance URL
+	if cfg.Mastodon.InstanceURL == "" {
+		fmt.Println("Mastodon instance URL not found.")
+		fmt.Println("\nFirst, set your Mastodon instance:")
+		fmt.Println("  imgup config set mastodon.instance https://mastodon.social")
+		fmt.Println("\nThen run 'imgup auth mastodon' again.")
+		return fmt.Errorf("missing instance URL")
+	}
+
+	// Step 1: Register the app if we don't have client credentials
+	if cfg.Mastodon.ClientID == "" || cfg.Mastodon.ClientSecret == "" {
+		fmt.Println("Registering app with Mastodon instance...")
+		
+		// Register app
+		appData := url.Values{}
+		appData.Set("client_name", "imgupv2")
+		appData.Set("redirect_uris", "http://localhost:8080/callback")
+		appData.Set("scopes", "read write:media write:statuses")
+		appData.Set("website", "https://github.com/pdxmph/imgupv2")
+		
+		resp, err := http.PostForm(cfg.Mastodon.InstanceURL+"/api/v1/apps", appData)
+		if err != nil {
+			return fmt.Errorf("failed to register app: %w", err)
+		}
+		defer resp.Body.Close()
+		
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("failed to register app: status %d", resp.StatusCode)
+		}
+		
+		var appResp struct {
+			ClientID     string `json:"client_id"`
+			ClientSecret string `json:"client_secret"`
+		}
+		
+		if err := json.NewDecoder(resp.Body).Decode(&appResp); err != nil {
+			return fmt.Errorf("failed to decode app response: %w", err)
+		}
+		
+		cfg.Mastodon.ClientID = appResp.ClientID
+		cfg.Mastodon.ClientSecret = appResp.ClientSecret
+		
+		// Save the client credentials
+		if err := cfg.Save(); err != nil {
+			return fmt.Errorf("failed to save client credentials: %w", err)
+		}
+		
+		fmt.Println("App registered successfully!")
+	}
+	
+	// Step 2: OAuth 2.0 authorization flow
+	authURL := fmt.Sprintf("%s/oauth/authorize?client_id=%s&scope=read%%20write:media%%20write:statuses&redirect_uri=%s&response_type=code",
+		cfg.Mastodon.InstanceURL,
+		cfg.Mastodon.ClientID,
+		url.QueryEscape("http://localhost:8080/callback"))
+	
+	fmt.Printf("\nPlease visit this URL to authorize imgupv2:\n%s\n\n", authURL)
+	
+	// Start local server to receive callback
+	authCode := make(chan string, 1)
+	errChan := make(chan error, 1)
+	
+	srv := &http.Server{Addr: ":8080"}
+	
+	http.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			errChan <- fmt.Errorf("no authorization code received")
+			fmt.Fprintf(w, "Error: No authorization code received")
+			return
+		}
+		
+		authCode <- code
+		fmt.Fprintf(w, "Authorization successful! You can close this window and return to the terminal.")
+	})
+	
+	// Start server in goroutine
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errChan <- err
+		}
+	}()
+	
+	// Wait for auth code or error
+	var code string
+	select {
+	case code = <-authCode:
+		fmt.Println("Authorization code received!")
+	case err := <-errChan:
+		return fmt.Errorf("authorization failed: %w", err)
+	case <-time.After(5 * time.Minute):
+		return fmt.Errorf("authorization timeout")
+	}
+	
+	// Shutdown server
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.Shutdown(ctx)
+	
+	// Step 3: Exchange code for access token
+	tokenData := url.Values{}
+	tokenData.Set("client_id", cfg.Mastodon.ClientID)
+	tokenData.Set("client_secret", cfg.Mastodon.ClientSecret)
+	tokenData.Set("code", code)
+	tokenData.Set("grant_type", "authorization_code")
+	tokenData.Set("redirect_uri", "http://localhost:8080/callback")
+	tokenData.Set("scope", "read write:media write:statuses")
+	
+	resp, err := http.PostForm(cfg.Mastodon.InstanceURL+"/oauth/token", tokenData)
+	if err != nil {
+		return fmt.Errorf("failed to exchange code for token: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to get access token: status %d", resp.StatusCode)
+	}
+	
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+		Scope       string `json:"scope"`
+		CreatedAt   int64  `json:"created_at"`
+	}
+	
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return fmt.Errorf("failed to decode token response: %w", err)
+	}
+	
+	// Save the access token
+	cfg.Mastodon.AccessToken = tokenResp.AccessToken
+	
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save access token: %w", err)
+	}
+	
+	fmt.Println("\nAuthentication successful! Access token saved.")
+	
+	// Verify the token by getting account info
+	verifyReq, err := http.NewRequest("GET", cfg.Mastodon.InstanceURL+"/api/v1/accounts/verify_credentials", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create verify request: %w", err)
+	}
+	
+	verifyReq.Header.Set("Authorization", "Bearer "+tokenResp.AccessToken)
+	
+	client := &http.Client{}
+	verifyResp, err := client.Do(verifyReq)
+	if err != nil {
+		return fmt.Errorf("failed to verify credentials: %w", err)
+	}
+	defer verifyResp.Body.Close()
+	
+	if verifyResp.StatusCode == http.StatusOK {
+		var account struct {
+			Username string `json:"username"`
+			Acct     string `json:"acct"`
+		}
+		if err := json.NewDecoder(verifyResp.Body).Decode(&account); err == nil {
+			fmt.Printf("Authenticated as @%s\n", account.Acct)
+		}
+	}
+	
 	return nil
 }
 
@@ -265,6 +458,14 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 	output := templates.Process(template, vars)
 	fmt.Println(output)
 
+	// Post to Mastodon if requested
+	if postToMastodon {
+		if err := postToMastodonService(cfg, result, originalTitle, originalDescription, altText, tags); err != nil {
+			fmt.Fprintf(os.Stderr, "Mastodon post failed: %v\n", err)
+			// Don't exit - the upload was successful
+		}
+	}
+
 	// Show accessibility tip for markdown without explicit alt text
 	if altText == "" && outputFormat == "markdown" {
 		fmt.Fprintf(os.Stderr, "\nTip: Use --alt to provide descriptive alt text for better accessibility.\n")
@@ -299,6 +500,12 @@ func configShow() error {
 	fmt.Printf("    Access Token: %s\n", maskString(cfg.Flickr.AccessToken))
 	fmt.Printf("    Access Secret: %s\n", maskString(cfg.Flickr.AccessSecret))
 
+	fmt.Printf("\n  Mastodon:\n")
+	fmt.Printf("    Instance URL: %s\n", cfg.Mastodon.InstanceURL)
+	fmt.Printf("    Client ID: %s\n", maskString(cfg.Mastodon.ClientID))
+	fmt.Printf("    Client Secret: %s\n", maskString(cfg.Mastodon.ClientSecret))
+	fmt.Printf("    Access Token: %s\n", maskString(cfg.Mastodon.AccessToken))
+
 	fmt.Printf("\n  Templates:\n")
 	for name, template := range cfg.Templates {
 		// Truncate long templates for display
@@ -323,6 +530,12 @@ func configSet(key, value string) error {
 		cfg.Flickr.ConsumerKey = value
 	case key == "flickr.secret":
 		cfg.Flickr.ConsumerSecret = value
+	case key == "mastodon.instance":
+		cfg.Mastodon.InstanceURL = value
+	case key == "mastodon.client_id":
+		cfg.Mastodon.ClientID = value
+	case key == "mastodon.client_secret":
+		cfg.Mastodon.ClientSecret = value
 	case strings.HasPrefix(key, "template."):
 		// Handle template settings
 		templateName := strings.TrimPrefix(key, "template.")
@@ -350,4 +563,84 @@ func maskString(s string) string {
 		return "****"
 	}
 	return s[:4] + "****" + s[len(s)-4:]
+}
+
+func postToMastodonService(cfg *config.Config, uploadResult *backends.UploadResult, photoTitle string, photoDescription string, altText string, photoTags []string) error {
+	// Check if Mastodon is configured
+	if cfg.Mastodon.AccessToken == "" {
+		return fmt.Errorf("not authenticated with Mastodon. Run 'imgup auth mastodon' first")
+	}
+	
+	// Create Mastodon client
+	client := mastodon.NewClient(
+		cfg.Mastodon.InstanceURL,
+		cfg.Mastodon.ClientID,
+		cfg.Mastodon.ClientSecret,
+		cfg.Mastodon.AccessToken,
+	)
+	
+	// Use post text if provided, otherwise use title
+	statusText := post
+	if statusText == "" && photoTitle != "" {
+		statusText = photoTitle
+	}
+	
+	// Add the photo URL to the post
+	statusText += "\n\n" + uploadResult.URL
+	
+	// Get photo sizes from Flickr to find a good size for Mastodon
+	api := backends.NewFlickrAPI(&cfg.Flickr)
+	sizes, err := api.GetPhotoSizes(context.Background(), uploadResult.PhotoID)
+	if err != nil {
+		return fmt.Errorf("failed to get photo sizes from Flickr: %w", err)
+	}
+	
+	// Find a good size for Mastodon (prefer Large or Medium)
+	var imageURL string
+	for _, size := range sizes {
+		// Prioritize these sizes for Mastodon
+		if size.Label == "Large" || size.Label == "Large 1024" {
+			imageURL = size.Source
+			break
+		} else if size.Label == "Medium" || size.Label == "Medium 800" {
+			imageURL = size.Source
+			// Keep looking for Large
+		}
+	}
+	
+	// Fallback to whatever we have
+	if imageURL == "" && len(sizes) > 0 {
+		// Use a middle size if available
+		if len(sizes) > 2 {
+			imageURL = sizes[len(sizes)/2].Source
+		} else {
+			imageURL = sizes[0].Source
+		}
+	}
+	
+	if imageURL == "" {
+		return fmt.Errorf("no suitable image size found from Flickr")
+	}
+	
+	// Determine alt text: use explicit alt text, fall back to description
+	mastodonAltText := altText
+	if mastodonAltText == "" && photoDescription != "" {
+		mastodonAltText = photoDescription
+	}
+	
+	// Upload the resized image from Flickr to Mastodon
+	fmt.Println("Downloading resized image from Flickr...")
+	mediaID, err := client.UploadMediaFromURL(imageURL, mastodonAltText)
+	if err != nil {
+		return fmt.Errorf("failed to upload media: %w", err)
+	}
+	
+	// Post the status
+	fmt.Printf("Posting to Mastodon (visibility: %s)...\n", visibility)
+	if err := client.PostStatus(statusText, []string{mediaID}, visibility, photoTags); err != nil {
+		return fmt.Errorf("failed to post status: %w", err)
+	}
+	
+	fmt.Println("Posted to Mastodon!")
+	return nil
 }

@@ -31,6 +31,30 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('upload-form').dispatchEvent(new Event('submit'));
         }
     });
+    
+    // Handle Mastodon checkbox
+    document.getElementById('mastodon-enabled').addEventListener('change', async (e) => {
+        const mastodonOptions = document.getElementById('mastodon-options');
+        if (e.target.checked) {
+            mastodonOptions.classList.remove('hidden');
+            // Focus on post text
+            document.getElementById('mastodon-text').focus();
+            // Resize window to accommodate extra fields
+            try {
+                await window.go.main.App.ResizeWindow(true);
+            } catch (err) {
+                console.error('Failed to resize window:', err);
+            }
+        } else {
+            mastodonOptions.classList.add('hidden');
+            // Resize window back to normal
+            try {
+                await window.go.main.App.ResizeWindow(false);
+            } catch (err) {
+                console.error('Failed to resize window:', err);
+            }
+        }
+    });
 });
 
 // Extract photo loading logic into a separate function
@@ -163,7 +187,10 @@ async function handleUpload(e) {
         description: form.description.value.trim(),
         tags: form.tags.value.split(/\s+/).filter(t => t),
         format: form.format.value,
-        private: form.private.checked
+        private: form.private.checked,
+        mastodonEnabled: form['mastodon-enabled'].checked,
+        mastodonText: form['mastodon-text'].value.trim(),
+        mastodonVisibility: form['mastodon-visibility'].value
     };
     
     // Show progress

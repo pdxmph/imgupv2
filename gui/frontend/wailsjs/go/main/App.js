@@ -10,6 +10,10 @@ export function GetSelectedPhoto() {
   return window['go']['main']['App']['GetSelectedPhoto']();
 }
 
+export function ResizeWindow(arg1) {
+  return window['go']['main']['App']['ResizeWindow'](arg1);
+}
+
 export function Upload(arg1) {
   return window['go']['main']['App']['Upload'](arg1);
 }

@@ -6,4 +6,6 @@ export function GetRecentTags():Promise<Array<string>>;
 
 export function GetSelectedPhoto():Promise<main.PhotoMetadata>;
 
+export function ResizeWindow(arg1:boolean):Promise<void>;
+
 export function Upload(arg1:main.PhotoMetadata):Promise<main.UploadResult>;

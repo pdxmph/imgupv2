@@ -53,6 +53,32 @@
                 </div>
             </div>
             
+            <div class="field">
+                <label>
+                    <input type="checkbox" id="mastodon-enabled" name="mastodon-enabled">
+                    Post to Mastodon
+                </label>
+            </div>
+            
+            <div id="mastodon-options" class="hidden">
+                <div class="field">
+                    <label for="mastodon-text">Post Text</label>
+                    <textarea id="mastodon-text" name="mastodon-text" rows="3" 
+                              placeholder="Your Mastodon post (tags will be converted to hashtags)"></textarea>
+                </div>
+                
+                <div class="field">
+                    <label for="mastodon-visibility">Visibility</label>
+                    <select id="mastodon-visibility" name="mastodon-visibility">
+                        <option value="public">Public</option>
+                        <option value="unlisted">Unlisted</option>
+                        <option value="private">Followers-only</option>
+                        <option value="direct">Direct</option>
+                    </select>
+                    <small>Alt text will be used for image accessibility</small>
+                </div>
+            </div>
+            
             <div class="buttons">
                 <button type="submit" id="upload-btn">Upload</button>
                 <button type="button" id="cancel-btn">Cancel</button>

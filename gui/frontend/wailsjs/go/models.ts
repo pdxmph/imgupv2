@@ -8,6 +8,9 @@ export namespace main {
 	    tags: string[];
 	    format: string;
 	    private: boolean;
+	    mastodonEnabled: boolean;
+	    mastodonText: string;
+	    mastodonVisibility: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PhotoMetadata(source);
@@ -22,6 +25,9 @@ export namespace main {
 	        this.tags = source["tags"];
 	        this.format = source["format"];
 	        this.private = source["private"];
+	        this.mastodonEnabled = source["mastodonEnabled"];
+	        this.mastodonText = source["mastodonText"];
+	        this.mastodonVisibility = source["mastodonVisibility"];
 	    }
 	}
 	export class UploadResult {
