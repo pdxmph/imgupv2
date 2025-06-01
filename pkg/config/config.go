@@ -12,6 +12,7 @@ type Config struct {
 	Default   DefaultConfig         `json:"default,omitempty"`
 	Flickr    FlickrConfig          `json:"flickr"`
 	Mastodon  MastodonConfig        `json:"mastodon"`
+	Bluesky   BlueskyConfig         `json:"bluesky"`
 	SmugMug   SmugMugConfig         `json:"smugmug"`
 	Templates map[string]string     `json:"templates,omitempty"`
 }
@@ -36,6 +37,13 @@ type MastodonConfig struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
 	AccessToken  string `json:"access_token,omitempty"`
+}
+
+// BlueskyConfig holds Bluesky-specific configuration
+type BlueskyConfig struct {
+	Handle      string `json:"handle"`
+	AppPassword string `json:"app_password,omitempty"`
+	PDS         string `json:"pds,omitempty"`  // Personal Data Server URL, defaults to https://bsky.social
 }
 
 // SmugMugConfig holds SmugMug-specific configuration

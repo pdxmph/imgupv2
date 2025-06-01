@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/pdxmph/imgupv2/pkg/backends"
 	"github.com/pdxmph/imgupv2/pkg/config"
+	"github.com/pdxmph/imgupv2/pkg/services/bluesky"
 	"github.com/pdxmph/imgupv2/pkg/services/mastodon"
 	"github.com/pdxmph/imgupv2/pkg/templates"
 )
@@ -37,6 +38,12 @@ var (
 	postToMastodon   bool
 	post             string
 	visibility       string
+	
+	// Bluesky flag (shares post with Mastodon)
+	postToBluesky    bool
+	
+	// Testing flag
+	dryRun           bool
 )
 
 func main() {
@@ -88,10 +95,12 @@ with support for metadata embedding and multiple output formats.`,
 	uploadCmd.Flags().StringSliceVar(&tags, "tags", nil, "Comma-separated tags")
 	uploadCmd.Flags().StringVar(&service, "service", "", "Upload service: flickr or smugmug (auto-detected if not specified)")
 	
-	// Add Mastodon flags
+	// Add social posting flags
 	uploadCmd.Flags().BoolVar(&postToMastodon, "mastodon", false, "Post to Mastodon after upload")
-	uploadCmd.Flags().StringVar(&post, "post", "", "Text for Mastodon post")
-	uploadCmd.Flags().StringVar(&visibility, "visibility", "public", "Mastodon post visibility: public, unlisted, followers, direct")
+	uploadCmd.Flags().BoolVar(&postToBluesky, "bluesky", false, "Post to Bluesky after upload")
+	uploadCmd.Flags().StringVar(&post, "post", "", "Text for social media post (shared by Mastodon and Bluesky)")
+	uploadCmd.Flags().StringVar(&visibility, "visibility", "public", "Mastodon post visibility: public, unlisted, followers, direct (Mastodon only)")
+	uploadCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be posted without actually posting")
 
 	// Config command
 	configCmd := &cobra.Command{
@@ -148,6 +157,11 @@ func authCommand(cmd *cobra.Command, args []string) {
 			fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
 			os.Exit(1)
 		}
+	case "bluesky":
+		if err := authBluesky(); err != nil {
+			fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "smugmug":
 		if err := authSmugMug(); err != nil {
 			fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
@@ -155,7 +169,7 @@ func authCommand(cmd *cobra.Command, args []string) {
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown service: %s\n", service)
-		fmt.Fprintf(os.Stderr, "Available services: flickr, mastodon, smugmug\n")
+		fmt.Fprintf(os.Stderr, "Available services: flickr, mastodon, bluesky, smugmug\n")
 		os.Exit(1)
 	}
 }
@@ -591,11 +605,58 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 	output := templates.Process(template, vars)
 	fmt.Println(output)
 
+	// Warn if using direct visibility with Bluesky
+	if postToBluesky && visibility == "direct" {
+		fmt.Fprintf(os.Stderr, "\nWarning: Bluesky does not support private posts. Your post will be PUBLIC on Bluesky.\n")
+		if !dryRun {
+			fmt.Fprintf(os.Stderr, "Use --dry-run to test without posting, or create a test account for safe testing.\n\n")
+		}
+	}
+	
 	// Post to Mastodon if requested
-	if postToMastodon {
+	if postToMastodon && !dryRun {
 		if err := postToMastodonService(cfg, service, photoID, photoURL, title, description, altText, tags); err != nil {
 			fmt.Fprintf(os.Stderr, "Mastodon post failed: %v\n", err)
 			// Don't exit - the upload was successful
+		}
+	} else if postToMastodon && dryRun {
+		fmt.Printf("\n[DRY RUN] Would post to Mastodon:\n")
+		fmt.Printf("  Visibility: %s\n", visibility)
+		statusText := post
+		if statusText == "" && title != "" {
+			statusText = title
+		}
+		statusText += "\n\n" + photoURL
+		fmt.Printf("  Text: %s\n", statusText)
+		if len(tags) > 0 {
+			fmt.Printf("  Tags: %v\n", tags)
+		}
+	}
+	
+	// Post to Bluesky if requested
+	if postToBluesky && !dryRun {
+		if err := postToBlueskyService(cfg, service, photoID, photoURL, title, description, altText, tags); err != nil {
+			fmt.Fprintf(os.Stderr, "Bluesky post failed: %v\n", err)
+			// Don't exit - the upload was successful
+		}
+	} else if postToBluesky && dryRun {
+		fmt.Printf("\n[DRY RUN] Would post to Bluesky:\n")
+		fmt.Printf("  Visibility: PUBLIC (all Bluesky posts are public)\n")
+		statusText := post
+		if statusText == "" && title != "" {
+			statusText = title
+		}
+		statusText += "\n\n" + photoURL
+		// Add hashtags
+		for _, tag := range tags {
+			hashtag := "#" + strings.ReplaceAll(tag, " ", "")
+			if !strings.Contains(statusText, hashtag) {
+				statusText += " " + hashtag
+			}
+		}
+		fmt.Printf("  Text (%d chars): %s\n", len(statusText), statusText)
+		if len(statusText) > 300 {
+			fmt.Printf("  WARNING: Text exceeds Bluesky's 300 character limit!\n")
 		}
 	}
 
@@ -651,6 +712,15 @@ func configShow() error {
 	fmt.Printf("    Client ID: %s\n", maskString(cfg.Mastodon.ClientID))
 	fmt.Printf("    Client Secret: %s\n", maskString(cfg.Mastodon.ClientSecret))
 	fmt.Printf("    Access Token: %s\n", maskString(cfg.Mastodon.AccessToken))
+	
+	fmt.Printf("\n  Bluesky:\n")
+	fmt.Printf("    Handle: %s\n", cfg.Bluesky.Handle)
+	fmt.Printf("    App Password: %s\n", maskString(cfg.Bluesky.AppPassword))
+	pds := cfg.Bluesky.PDS
+	if pds == "" {
+		pds = "https://bsky.social (default)"
+	}
+	fmt.Printf("    PDS: %s\n", pds)
 
 	fmt.Printf("\n  SmugMug:\n")
 	fmt.Printf("    Consumer Key: %s\n", maskString(cfg.SmugMug.ConsumerKey))
@@ -693,6 +763,12 @@ func configSet(key, value string) error {
 		cfg.Mastodon.ClientID = value
 	case key == "mastodon.client_secret":
 		cfg.Mastodon.ClientSecret = value
+	case key == "bluesky.handle":
+		cfg.Bluesky.Handle = value
+	case key == "bluesky.app_password":
+		cfg.Bluesky.AppPassword = value
+	case key == "bluesky.pds":
+		cfg.Bluesky.PDS = value
 	case key == "smugmug.key":
 		cfg.SmugMug.ConsumerKey = value
 	case key == "smugmug.secret":
@@ -813,5 +889,141 @@ func postToMastodonService(cfg *config.Config, service string, photoID string, p
 	}
 	
 	fmt.Println("Posted to Mastodon!")
+	return nil
+}
+
+
+func authBluesky() error {
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	
+	// Check if we have handle
+	if cfg.Bluesky.Handle == "" {
+		fmt.Println("Bluesky handle not found.")
+		fmt.Println("\nFirst, set your Bluesky handle:")
+		fmt.Println("  imgup config set bluesky.handle yourhandle.bsky.social")
+		fmt.Println("\nThen run 'imgup auth bluesky' again.")
+		return fmt.Errorf("missing handle")
+	}
+	
+	// Check if we have app password
+	if cfg.Bluesky.AppPassword == "" {
+		fmt.Println("Bluesky app password not found.")
+		fmt.Println("\nTo create an app password:")
+		fmt.Println("1. Go to https://bsky.app/settings/app-passwords")
+		fmt.Println("2. Click 'Add App Password'")
+		fmt.Println("3. Give it a name (e.g., 'imgupv2')")
+		fmt.Println("4. Copy the generated password")
+		fmt.Println("\nThen run:")
+		fmt.Println("  imgup config set bluesky.app_password YOUR_APP_PASSWORD")
+		fmt.Println("\nOptionally, if not using bsky.social:")
+		fmt.Println("  imgup config set bluesky.pds https://your-pds-server.com")
+		return fmt.Errorf("missing app password")
+	}
+	
+	// Test authentication
+	client := bluesky.NewClient(cfg.Bluesky.PDS, cfg.Bluesky.Handle, cfg.Bluesky.AppPassword)
+	
+	fmt.Println("Testing authentication...")
+	if err := client.Authenticate(); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+	
+	fmt.Printf("Successfully authenticated as @%s!\n", cfg.Bluesky.Handle)
+	
+	// Note: Unlike OAuth services, we don't save any tokens since Bluesky
+	// uses the app password directly for each session
+	
+	return nil
+}
+
+
+func postToBlueskyService(cfg *config.Config, service string, photoID string, photoURL string, photoTitle string, photoDescription string, altText string, photoTags []string) error {
+	// Check if Bluesky is configured
+	if cfg.Bluesky.Handle == "" || cfg.Bluesky.AppPassword == "" {
+		return fmt.Errorf("not authenticated with Bluesky. Run 'imgup auth bluesky' first")
+	}
+	
+	// Create Bluesky client
+	client := bluesky.NewClient(cfg.Bluesky.PDS, cfg.Bluesky.Handle, cfg.Bluesky.AppPassword)
+	
+	// Use post text if provided, otherwise use title
+	statusText := post
+	if statusText == "" && photoTitle != "" {
+		statusText = photoTitle
+	}
+	
+	// Add the photo URL to the post
+	statusText += "\n\n" + photoURL
+	
+	// Check character limit (300 for Bluesky)
+	if len(statusText) > 300 {
+		// Warn but continue with truncated text
+		fmt.Fprintf(os.Stderr, "Warning: Post text exceeds Bluesky's 300 character limit (%d chars). Truncating...\n", len(statusText))
+		// Leave room for "..."
+		statusText = statusText[:297] + "..."
+	}
+	
+	// Get a suitable image URL based on the service
+	var imageURL string
+	
+	if service == "flickr" {
+		// Get photo sizes from Flickr to find a good size for Bluesky
+		api := backends.NewFlickrAPI(&cfg.Flickr)
+		sizes, err := api.GetPhotoSizes(context.Background(), photoID)
+		if err != nil {
+			return fmt.Errorf("failed to get photo sizes from Flickr: %w", err)
+		}
+		
+		// Find a suitable size - prefer Large (1024px) or Original
+		for _, size := range sizes {
+			if size.Label == "Large" || size.Label == "Large 1600" || size.Label == "Large 2048" {
+				imageURL = size.Source
+				break
+			}
+		}
+		
+		// Fallback to original if no large size found
+		if imageURL == "" {
+			for _, size := range sizes {
+				if size.Label == "Original" {
+					imageURL = size.Source
+					break
+				}
+			}
+		}
+	} else if service == "smugmug" {
+		// SmugMug provides good-sized images already
+		// The imageURL is already set from the upload response
+		return fmt.Errorf("SmugMug to Bluesky posting not yet implemented")
+	}
+	
+	if imageURL == "" {
+		return fmt.Errorf("no suitable image size found from %s", service)
+	}
+	
+	// Determine alt text: use explicit alt text, fall back to description
+	blueskyAltText := altText
+	if blueskyAltText == "" && photoDescription != "" {
+		blueskyAltText = photoDescription
+	}
+	
+	// Upload the image from the photo service to Bluesky
+	fmt.Println("Downloading image for Bluesky...")
+	blob, _, err := client.UploadMediaFromURL(imageURL, blueskyAltText)
+	if err != nil {
+		return fmt.Errorf("failed to upload media: %w", err)
+	}
+	
+	// Post the status
+	fmt.Println("Posting to Bluesky...")
+	if err := client.PostStatus(statusText, []bluesky.BlobResponse{*blob}, []string{blueskyAltText}, photoTags); err != nil {
+		return fmt.Errorf("failed to post status: %w", err)
+	}
+	
+	fmt.Println("Posted to Bluesky!")
 	return nil
 }
