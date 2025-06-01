@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -51,6 +52,26 @@ type PostRecord struct {
 	Text      string    `json:"text"`
 	CreatedAt string    `json:"createdAt"`
 	Embed     *Embed    `json:"embed,omitempty"`
+	Facets    []Facet   `json:"facets,omitempty"`
+}
+
+// Facet represents a rich text annotation (links, mentions, etc)
+type Facet struct {
+	Index    FacetIndex    `json:"index"`
+	Features []FacetFeature `json:"features"`
+}
+
+// FacetIndex specifies the byte range in the text
+type FacetIndex struct {
+	ByteStart int `json:"byteStart"`
+	ByteEnd   int `json:"byteEnd"`
+}
+
+// FacetFeature represents a facet feature (link, mention, etc)
+type FacetFeature struct {
+	Type string `json:"$type"`
+	URI  string `json:"uri,omitempty"`
+	DID  string `json:"did,omitempty"`
 }
 
 // Embed represents an embedded object (images)
@@ -129,6 +150,44 @@ func (c *Client) Authenticate() error {
 	return nil
 }
 
+// detectURLs finds URLs in text and returns facets for them
+func detectURLs(text string) []Facet {
+	// URL regex - simplified version that catches most common URLs
+	// Based on the Bluesky docs recommendation
+	urlRegex := regexp.MustCompile(`https?://[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*(/[a-zA-Z0-9_.\-~:/?#\[\]@!$&'()*+,;=]*)?`)
+	
+	facets := []Facet{}
+	
+	// Convert text to bytes for accurate byte indexing
+	textBytes := []byte(text)
+	
+	// Find all URL matches
+	matches := urlRegex.FindAllIndex(textBytes, -1)
+	
+	for _, match := range matches {
+		byteStart := match[0]
+		byteEnd := match[1]
+		url := string(textBytes[byteStart:byteEnd])
+		
+		facet := Facet{
+			Index: FacetIndex{
+				ByteStart: byteStart,
+				ByteEnd:   byteEnd,
+			},
+			Features: []FacetFeature{
+				{
+					Type: "app.bsky.richtext.facet#link",
+					URI:  url,
+				},
+			},
+		}
+		
+		facets = append(facets, facet)
+	}
+	
+	return facets
+}
+
 // PostStatus posts a new status to Bluesky
 func (c *Client) PostStatus(text string, mediaBlobs []BlobResponse, altTexts []string, tags []string) error {
 	// Ensure we're authenticated
@@ -157,6 +216,12 @@ func (c *Client) PostStatus(text string, mediaBlobs []BlobResponse, altTexts []s
 		Type:      "app.bsky.feed.post",
 		Text:      text,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	
+	// Detect URLs and add facets to make them clickable
+	facets := detectURLs(text)
+	if len(facets) > 0 {
+		post.Facets = facets
 	}
 	
 	// Add images if provided
