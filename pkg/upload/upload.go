@@ -98,7 +98,7 @@ func (s *Service) Upload(ctx context.Context, imagePath string, opts Options) (*
 	}
 
 	// Perform upload
-	resp, err := flickrUploader.Upload(ctx, uploadPath, "", "", opts.Private)
+	resp, err := flickrUploader.Upload(ctx, uploadPath, "", "", []string{}, opts.Private)
 	if err != nil {
 		return nil, fmt.Errorf("upload failed: %w", err)
 	}

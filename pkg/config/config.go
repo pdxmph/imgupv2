@@ -9,9 +9,17 @@ import (
 
 // Config holds the application configuration
 type Config struct {
+	Default   DefaultConfig         `json:"default,omitempty"`
 	Flickr    FlickrConfig          `json:"flickr"`
 	Mastodon  MastodonConfig        `json:"mastodon"`
+	SmugMug   SmugMugConfig         `json:"smugmug"`
 	Templates map[string]string     `json:"templates,omitempty"`
+}
+
+// DefaultConfig holds default settings
+type DefaultConfig struct {
+	Format  string `json:"format,omitempty"`
+	Service string `json:"service,omitempty"`
 }
 
 // FlickrConfig holds Flickr-specific configuration
@@ -30,13 +38,23 @@ type MastodonConfig struct {
 	AccessToken  string `json:"access_token,omitempty"`
 }
 
+// SmugMugConfig holds SmugMug-specific configuration
+type SmugMugConfig struct {
+	ConsumerKey    string `json:"consumer_key"`
+	ConsumerSecret string `json:"consumer_secret"`
+	AccessToken    string `json:"access_token,omitempty"`
+	AccessSecret   string `json:"access_secret,omitempty"`
+	AlbumID        string `json:"album_id,omitempty"`
+}
+
 // DefaultTemplates returns the default output templates
 func DefaultTemplates() map[string]string {
 	return map[string]string{
-		"markdown": "![%alt%|%description%|%title%|%filename%](%image_url%)",
-		"html":     `<img src="%image_url%" alt="%alt%|%description%|%title%|%filename%">`,
+		"markdown": "![%alt|description|title|filename%](%image_url%)",
+		"html":     `<img src="%image_url%" alt="%alt|description|title|filename%">`,
 		"url":      "%url%",
 		"json":     `{"photo_id":"%photo_id%","url":"%url%","image_url":"%image_url%"}`,
+		"org":      "[[%image_url%][%alt|description|title|filename%]]",
 	}
 }
 

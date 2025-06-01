@@ -10,11 +10,13 @@ import (
 )
 
 // Writer handles writing metadata to images
+// Deprecated: Metadata embedding is no longer used. Flickr and SmugMug APIs handle metadata directly.
 type Writer struct {
 	exiftoolPath string
 }
 
 // NewWriter creates a new metadata writer
+// Deprecated: Use backend APIs directly instead of embedding metadata
 func NewWriter() (*Writer, error) {
 	// Check if exiftool is available in PATH
 	path, err := exec.LookPath("exiftool")
@@ -43,6 +45,7 @@ func NewWriter() (*Writer, error) {
 }
 
 // WriteMetadata writes title, description, and keywords to image metadata
+// Deprecated: Use backend APIs directly instead of embedding metadata
 func (w *Writer) WriteMetadata(imagePath, title, description string, keywords []string) error {
 	// Build exiftool command arguments
 	args := []string{
@@ -93,6 +96,7 @@ func (w *Writer) WriteMetadata(imagePath, title, description string, keywords []
 }
 
 // CopyWithMetadata creates a temporary copy of the image with metadata
+// Deprecated: Use backend APIs directly instead of embedding metadata
 func (w *Writer) CopyWithMetadata(imagePath, title, description string, keywords []string) (string, error) {
 	// Create temp file with same extension
 	ext := filepath.Ext(imagePath)

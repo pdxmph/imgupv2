@@ -47,7 +47,7 @@ func NewFlickrUploader(consumerKey, consumerSecret, accessToken, accessSecret st
 }
 
 // Upload uploads an image to Flickr using upload-then-set pattern
-func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, description string, isPrivate bool) (*UploadResult, error) {
+func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, description string, tags []string, isPrivate bool) (*UploadResult, error) {
 	if os.Getenv("IMGUP_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "DEBUG: Upload called with isPrivate=%v\n", isPrivate)
 	}
@@ -60,13 +60,31 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 	
 	// Step 2: Set metadata if provided
 	if title != "" || description != "" {
+		if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Setting photo metadata (title: %q, description: %q)\n", title, description)
+		}
 		if err := u.setPhotoMeta(ctx, photoID, title, description); err != nil {
 			// Log error but don't fail - photo is already uploaded
 			fmt.Fprintf(os.Stderr, "Warning: Failed to set photo metadata: %v\n", err)
+		} else if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Successfully set photo metadata\n")
 		}
 	}
 	
-	// Step 3: Set privacy if needed
+	// Step 3: Add tags if provided
+	if len(tags) > 0 {
+		if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Adding tags: %v\n", tags)
+		}
+		if err := u.addTags(ctx, photoID, tags); err != nil {
+			// Log error but don't fail - photo is already uploaded
+			fmt.Fprintf(os.Stderr, "Warning: Failed to add tags: %v\n", err)
+		} else if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Successfully added tags\n")
+		}
+	}
+	
+	// Step 4: Set privacy if needed
 	if isPrivate {
 		if os.Getenv("IMGUP_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "DEBUG: Setting photo as private (photo_id: %s)\n", photoID)
@@ -205,6 +223,44 @@ func (u *FlickrUploader) setPhotoMeta(ctx context.Context, photoID, title, descr
 		"photo_id":       {photoID},
 		"title":          {title},
 		"description":    {description},
+		"format":         {"json"},
+		"nojsoncallback": {"1"},
+	}
+	
+	// Make API call
+	resp, err := u.makeAPICall(ctx, "POST", params)
+	if err != nil {
+		return err
+	}
+	
+	// Parse response
+	var result struct {
+		Stat    string `json:"stat"`
+		Message string `json:"message,omitempty"`
+	}
+	
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+	
+	if result.Stat != "ok" {
+		return fmt.Errorf("API error: %s", result.Message)
+	}
+	
+	return nil
+}
+
+// addTags adds tags to a photo
+func (u *FlickrUploader) addTags(ctx context.Context, photoID string, tags []string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	
+	// Build parameters
+	params := url.Values{
+		"method":         {"flickr.photos.addTags"},
+		"photo_id":       {photoID},
+		"tags":           {strings.Join(tags, " ")},
 		"format":         {"json"},
 		"nojsoncallback": {"1"},
 	}

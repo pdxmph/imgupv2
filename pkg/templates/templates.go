@@ -1,6 +1,8 @@
 package templates
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -25,7 +27,8 @@ type Variables struct {
 }
 
 var (
-	// Match %variable% or %var1%|%var2%|%var3%
+	// Match %variable% or %var1|var2|var3% (with pipes inside the percent signs)
+	// This pattern matches content between % signs, which may contain pipes
 	templatePattern = regexp.MustCompile(`%([^%]+)%`)
 )
 
@@ -35,12 +38,22 @@ func Process(template string, vars Variables) string {
 		// Remove the % delimiters
 		content := strings.Trim(match, "%")
 		
+		if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Template processing match: %s\n", match)
+		}
+		
 		// Check if it's a fallback chain
 		if strings.Contains(content, "|") {
 			// Handle fallback chain
 			parts := strings.Split(content, "|")
+			if os.Getenv("IMGUP_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "DEBUG: Fallback chain parts: %v\n", parts)
+			}
 			for _, part := range parts {
 				value := getVariable(strings.TrimSpace(part), vars)
+				if os.Getenv("IMGUP_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "DEBUG: Trying '%s' = '%s'\n", part, value)
+				}
 				if value != "" {
 					return value
 				}
@@ -49,7 +62,11 @@ func Process(template string, vars Variables) string {
 		}
 		
 		// Single variable
-		return getVariable(content, vars)
+		value := getVariable(content, vars)
+		if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Single variable '%s' = '%s'\n", content, value)
+		}
+		return value
 	})
 	
 	return result

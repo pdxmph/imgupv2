@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/pdxmph/imgupv2/pkg/backends"
 	"github.com/pdxmph/imgupv2/pkg/config"
-	"github.com/pdxmph/imgupv2/pkg/metadata"
 	"github.com/pdxmph/imgupv2/pkg/services/mastodon"
 	"github.com/pdxmph/imgupv2/pkg/templates"
 )
@@ -31,6 +31,7 @@ var (
 	outputFormat string
 	isPrivate    bool
 	tags         []string
+	service      string
 	
 	// Mastodon flags
 	postToMastodon   bool
@@ -85,6 +86,7 @@ with support for metadata embedding and multiple output formats.`,
 	uploadCmd.Flags().StringVar(&outputFormat, "format", "url", "Output format: url, markdown, html, json")
 	uploadCmd.Flags().BoolVar(&isPrivate, "private", false, "Make the photo private")
 	uploadCmd.Flags().StringSliceVar(&tags, "tags", nil, "Comma-separated tags")
+	uploadCmd.Flags().StringVar(&service, "service", "", "Upload service: flickr or smugmug (auto-detected if not specified)")
 	
 	// Add Mastodon flags
 	uploadCmd.Flags().BoolVar(&postToMastodon, "mastodon", false, "Post to Mastodon after upload")
@@ -146,8 +148,14 @@ func authCommand(cmd *cobra.Command, args []string) {
 			fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
 			os.Exit(1)
 		}
+	case "smugmug":
+		if err := authSmugMug(); err != nil {
+			fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown service: %s\n", service)
+		fmt.Fprintf(os.Stderr, "Available services: flickr, mastodon, smugmug\n")
 		os.Exit(1)
 	}
 }
@@ -367,6 +375,49 @@ func authMastodon() error {
 	return nil
 }
 
+func authSmugMug() error {
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Check if we have API credentials
+	if cfg.SmugMug.ConsumerKey == "" || cfg.SmugMug.ConsumerSecret == "" {
+		fmt.Println("SmugMug API credentials not found.")
+		fmt.Println("\nTo get your API credentials:")
+		fmt.Println("1. Go to https://api.smugmug.com/api/developer/apply")
+		fmt.Println("2. Apply for an API key")
+		fmt.Println("3. Note your Key and Secret")
+		fmt.Println("\nThen run:")
+		fmt.Println("  imgup config set smugmug.key YOUR_KEY")
+		fmt.Println("  imgup config set smugmug.secret YOUR_SECRET")
+		return fmt.Errorf("missing API credentials")
+	}
+
+	// Create authenticator
+	auth := backends.NewSmugMugAuth(cfg.SmugMug.ConsumerKey, cfg.SmugMug.ConsumerSecret)
+
+	// Perform OAuth flow with album selection
+	ctx := context.Background()
+	token, albumID, err := auth.Authenticate(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Save tokens and album ID
+	cfg.SmugMug.AccessToken = token.Token
+	cfg.SmugMug.AccessSecret = token.TokenSecret
+	cfg.SmugMug.AlbumID = albumID
+
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Println("\nTokens and album selection saved to config!")
+	return nil
+}
+
 func uploadCommand(cmd *cobra.Command, args []string) {
 	imagePath := args[0]
 
@@ -383,59 +434,104 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Check if authenticated
-	if cfg.Flickr.AccessToken == "" || cfg.Flickr.AccessSecret == "" {
-		fmt.Fprintf(os.Stderr, "Error: Not authenticated. Run 'imgup auth flickr' first.\n")
-		os.Exit(1)
+	// Apply defaults from config if flags weren't explicitly set
+	if !cmd.Flags().Changed("format") && cfg.Default.Format != "" {
+		outputFormat = cfg.Default.Format
+	}
+	if !cmd.Flags().Changed("service") && cfg.Default.Service != "" {
+		service = cfg.Default.Service
 	}
 
-	// Create uploader
-	uploader := backends.NewFlickrUploader(
-		cfg.Flickr.ConsumerKey,
-		cfg.Flickr.ConsumerSecret,
-		cfg.Flickr.AccessToken,
-		cfg.Flickr.AccessSecret,
-	)
-
-	// Check if we should embed metadata
-	uploadPath := imagePath
-	var tempFile string
-
-	// Save original values for output formatting
-	originalTitle := title
-	originalDescription := description
-
-	if (title != "" || description != "" || len(tags) > 0) && metadata.HasExiftool() {
-		// Try to embed metadata into the image
-		writer, err := metadata.NewWriter()
-		if err == nil {
-			fmt.Println("Embedding metadata into image...")
-			tempPath, err := writer.CopyWithMetadata(imagePath, title, description, tags)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: Could not embed metadata: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Uploading without embedded metadata...\n")
+	// Determine which service to use
+	if service == "" {
+		// Auto-detect based on which service is configured
+		hasFlickr := cfg.Flickr.AccessToken != "" && cfg.Flickr.AccessSecret != ""
+		hasSmugMug := cfg.SmugMug.AccessToken != "" && cfg.SmugMug.AccessSecret != ""
+		
+		if hasFlickr && hasSmugMug {
+			// If default service is set, use it
+			if cfg.Default.Service != "" {
+				service = cfg.Default.Service
 			} else {
-				uploadPath = tempPath
-				tempFile = tempPath
-				// Clear title/description so we don't try to send them as form fields
-				title = ""
-				description = ""
+				fmt.Fprintf(os.Stderr, "Error: Both Flickr and SmugMug are configured. Please specify --service or set a default:\n")
+				fmt.Fprintf(os.Stderr, "  imgup config set default.service flickr\n")
+				fmt.Fprintf(os.Stderr, "  imgup config set default.service smugmug\n")
+				os.Exit(1)
 			}
+		} else if hasFlickr {
+			service = "flickr"
+		} else if hasSmugMug {
+			service = "smugmug"
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: Not authenticated. Run 'imgup auth flickr' or 'imgup auth smugmug' first.\n")
+			os.Exit(1)
+		}
+	}
+	
+	// Validate service
+	if service != "flickr" && service != "smugmug" {
+		fmt.Fprintf(os.Stderr, "Error: Invalid service '%s'. Must be 'flickr' or 'smugmug'\n", service)
+		os.Exit(1)
+	}
+	
+	// Check authentication for specified service
+	switch service {
+	case "flickr":
+		if cfg.Flickr.AccessToken == "" || cfg.Flickr.AccessSecret == "" {
+			fmt.Fprintf(os.Stderr, "Error: Not authenticated with Flickr. Run 'imgup auth flickr' first.\n")
+			os.Exit(1)
+		}
+	case "smugmug":
+		if cfg.SmugMug.AccessToken == "" || cfg.SmugMug.AccessSecret == "" {
+			fmt.Fprintf(os.Stderr, "Error: Not authenticated with SmugMug. Run 'imgup auth smugmug' first.\n")
+			os.Exit(1)
+		}
+		if cfg.SmugMug.AlbumID == "" {
+			fmt.Fprintf(os.Stderr, "Error: No SmugMug album selected. Run 'imgup auth smugmug' again.\n")
+			os.Exit(1)
 		}
 	}
 
-	// Clean up temp file when done
-	if tempFile != "" {
-		defer os.Remove(tempFile)
-	}
 
-	// Upload
-	fmt.Printf("Uploading %s to Flickr...\n", imagePath)
+	// Perform the upload based on service
 	ctx := context.Background()
-	result, err := uploader.Upload(ctx, uploadPath, title, description, isPrivate)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Upload failed: %v\n", err)
-		os.Exit(1)
+	var photoID, photoURL, imageURL string
+	
+	fmt.Printf("Uploading %s to %s...\n", imagePath, strings.Title(service))
+	
+	switch service {
+	case "flickr":
+		uploader := backends.NewFlickrUploader(
+			cfg.Flickr.ConsumerKey,
+			cfg.Flickr.ConsumerSecret,
+			cfg.Flickr.AccessToken,
+			cfg.Flickr.AccessSecret,
+		)
+		result, err := uploader.Upload(ctx, imagePath, title, description, tags, isPrivate)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Upload failed: %v\n", err)
+			os.Exit(1)
+		}
+		photoID = result.PhotoID
+		photoURL = result.URL
+		imageURL = result.ImageURL
+		
+	case "smugmug":
+		uploader := backends.NewSmugMugUploader(
+			cfg.SmugMug.ConsumerKey,
+			cfg.SmugMug.ConsumerSecret,
+			cfg.SmugMug.AccessToken,
+			cfg.SmugMug.AccessSecret,
+			cfg.SmugMug.AlbumID,
+		)
+		result, err := uploader.Upload(ctx, imagePath, title, description, tags, isPrivate)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Upload failed: %v\n", err)
+			os.Exit(1)
+		}
+		photoID = result.ImageKey
+		photoURL = result.URL
+		imageURL = result.ImageURL
 	}
 
 	// Output result using templates
@@ -450,9 +546,46 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "%s\n", strings.Join(formats, ", "))
 		os.Exit(1)
 	}
+	
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Using template for format '%s': %s\n", outputFormat, template)
+	}
 
 	// Build template variables
-	vars := templates.BuildVariables(result, imagePath, originalTitle, originalDescription, altText, tags)
+	filename := filepath.Base(imagePath)
+	filenameNoExt := strings.TrimSuffix(filename, filepath.Ext(filename))
+	
+	// Build edit URL based on service
+	editURL := ""
+	if service == "flickr" {
+		editURL = "https://www.flickr.com/photos/upload/edit/?ids=" + photoID
+	}
+	// SmugMug doesn't have a direct edit URL pattern we can construct
+	
+	// Debug output
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Building template variables:\n")
+		fmt.Fprintf(os.Stderr, "  photoID: %s\n", photoID)
+		fmt.Fprintf(os.Stderr, "  photoURL: %s\n", photoURL)
+		fmt.Fprintf(os.Stderr, "  imageURL: %s\n", imageURL)
+		fmt.Fprintf(os.Stderr, "  title: %s\n", title)
+		fmt.Fprintf(os.Stderr, "  description: %s\n", description)
+		fmt.Fprintf(os.Stderr, "  altText: %s\n", altText)
+		fmt.Fprintf(os.Stderr, "  tags: %v\n", tags)
+		fmt.Fprintf(os.Stderr, "  filenameNoExt: %s\n", filenameNoExt)
+	}
+	
+	vars := templates.Variables{
+		PhotoID:     photoID,
+		URL:         photoURL,
+		ImageURL:    imageURL,
+		EditURL:     editURL,
+		Filename:    filenameNoExt,
+		Title:       title,
+		Description: description,
+		Alt:         altText,
+		Tags:        tags,
+	}
 
 	// Process and output
 	output := templates.Process(template, vars)
@@ -460,7 +593,7 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 
 	// Post to Mastodon if requested
 	if postToMastodon {
-		if err := postToMastodonService(cfg, result, originalTitle, originalDescription, altText, tags); err != nil {
+		if err := postToMastodonService(cfg, service, photoID, photoURL, title, description, altText, tags); err != nil {
 			fmt.Fprintf(os.Stderr, "Mastodon post failed: %v\n", err)
 			// Don't exit - the upload was successful
 		}
@@ -494,6 +627,19 @@ func configShow() error {
 	}
 
 	fmt.Println("Configuration:")
+	
+	// Show defaults if any are set
+	if cfg.Default.Format != "" || cfg.Default.Service != "" {
+		fmt.Printf("  Default:\n")
+		if cfg.Default.Format != "" {
+			fmt.Printf("    Format: %s\n", cfg.Default.Format)
+		}
+		if cfg.Default.Service != "" {
+			fmt.Printf("    Service: %s\n", cfg.Default.Service)
+		}
+		fmt.Println()
+	}
+	
 	fmt.Printf("  Flickr:\n")
 	fmt.Printf("    Consumer Key: %s\n", maskString(cfg.Flickr.ConsumerKey))
 	fmt.Printf("    Consumer Secret: %s\n", maskString(cfg.Flickr.ConsumerSecret))
@@ -505,6 +651,13 @@ func configShow() error {
 	fmt.Printf("    Client ID: %s\n", maskString(cfg.Mastodon.ClientID))
 	fmt.Printf("    Client Secret: %s\n", maskString(cfg.Mastodon.ClientSecret))
 	fmt.Printf("    Access Token: %s\n", maskString(cfg.Mastodon.AccessToken))
+
+	fmt.Printf("\n  SmugMug:\n")
+	fmt.Printf("    Consumer Key: %s\n", maskString(cfg.SmugMug.ConsumerKey))
+	fmt.Printf("    Consumer Secret: %s\n", maskString(cfg.SmugMug.ConsumerSecret))
+	fmt.Printf("    Access Token: %s\n", maskString(cfg.SmugMug.AccessToken))
+	fmt.Printf("    Access Secret: %s\n", maskString(cfg.SmugMug.AccessSecret))
+	fmt.Printf("    Album ID: %s\n", cfg.SmugMug.AlbumID)
 
 	fmt.Printf("\n  Templates:\n")
 	for name, template := range cfg.Templates {
@@ -526,6 +679,10 @@ func configSet(key, value string) error {
 	}
 
 	switch {
+	case key == "default.format":
+		cfg.Default.Format = value
+	case key == "default.service":
+		cfg.Default.Service = value
 	case key == "flickr.key":
 		cfg.Flickr.ConsumerKey = value
 	case key == "flickr.secret":
@@ -536,6 +693,10 @@ func configSet(key, value string) error {
 		cfg.Mastodon.ClientID = value
 	case key == "mastodon.client_secret":
 		cfg.Mastodon.ClientSecret = value
+	case key == "smugmug.key":
+		cfg.SmugMug.ConsumerKey = value
+	case key == "smugmug.secret":
+		cfg.SmugMug.ConsumerSecret = value
 	case strings.HasPrefix(key, "template."):
 		// Handle template settings
 		templateName := strings.TrimPrefix(key, "template.")
@@ -565,7 +726,7 @@ func maskString(s string) string {
 	return s[:4] + "****" + s[len(s)-4:]
 }
 
-func postToMastodonService(cfg *config.Config, uploadResult *backends.UploadResult, photoTitle string, photoDescription string, altText string, photoTags []string) error {
+func postToMastodonService(cfg *config.Config, service string, photoID string, photoURL string, photoTitle string, photoDescription string, altText string, photoTags []string) error {
 	// Check if Mastodon is configured
 	if cfg.Mastodon.AccessToken == "" {
 		return fmt.Errorf("not authenticated with Mastodon. Run 'imgup auth mastodon' first")
@@ -586,40 +747,50 @@ func postToMastodonService(cfg *config.Config, uploadResult *backends.UploadResu
 	}
 	
 	// Add the photo URL to the post
-	statusText += "\n\n" + uploadResult.URL
+	statusText += "\n\n" + photoURL
 	
-	// Get photo sizes from Flickr to find a good size for Mastodon
-	api := backends.NewFlickrAPI(&cfg.Flickr)
-	sizes, err := api.GetPhotoSizes(context.Background(), uploadResult.PhotoID)
-	if err != nil {
-		return fmt.Errorf("failed to get photo sizes from Flickr: %w", err)
-	}
-	
-	// Find a good size for Mastodon (prefer Large or Medium)
+	// Get a suitable image URL for Mastodon based on the service
 	var imageURL string
-	for _, size := range sizes {
-		// Prioritize these sizes for Mastodon
-		if size.Label == "Large" || size.Label == "Large 1024" {
-			imageURL = size.Source
-			break
-		} else if size.Label == "Medium" || size.Label == "Medium 800" {
-			imageURL = size.Source
-			// Keep looking for Large
-		}
-	}
 	
-	// Fallback to whatever we have
-	if imageURL == "" && len(sizes) > 0 {
-		// Use a middle size if available
-		if len(sizes) > 2 {
-			imageURL = sizes[len(sizes)/2].Source
-		} else {
-			imageURL = sizes[0].Source
+	if service == "flickr" {
+		// Get photo sizes from Flickr to find a good size for Mastodon
+		api := backends.NewFlickrAPI(&cfg.Flickr)
+		sizes, err := api.GetPhotoSizes(context.Background(), photoID)
+		if err != nil {
+			return fmt.Errorf("failed to get photo sizes from Flickr: %w", err)
 		}
+		
+		// Find a good size for Mastodon (prefer Large or Medium)
+		for _, size := range sizes {
+			// Prioritize these sizes for Mastodon
+			if size.Label == "Large" || size.Label == "Large 1024" {
+				imageURL = size.Source
+				break
+			} else if size.Label == "Medium" || size.Label == "Medium 800" {
+				imageURL = size.Source
+				// Keep looking for Large
+			}
+		}
+		
+		// Fallback to whatever we have
+		if imageURL == "" && len(sizes) > 0 {
+			// Use a middle size if available
+			if len(sizes) > 2 {
+				imageURL = sizes[len(sizes)/2].Source
+			} else {
+				imageURL = sizes[0].Source
+			}
+		}
+	} else if service == "smugmug" {
+		// For SmugMug, we already have the imageURL from the upload result
+		// Just need to get it from where we stored it
+		// SmugMug provides good-sized images already, so we can use them directly
+		// The imageURL is already set from the upload response
+		return fmt.Errorf("SmugMug to Mastodon posting not yet implemented")
 	}
 	
 	if imageURL == "" {
-		return fmt.Errorf("no suitable image size found from Flickr")
+		return fmt.Errorf("no suitable image size found from %s", service)
 	}
 	
 	// Determine alt text: use explicit alt text, fall back to description
