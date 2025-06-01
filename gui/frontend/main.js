@@ -32,13 +32,37 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
     
+    // Handle social media checkboxes
+    const mastodonCheckbox = document.getElementById('mastodon-enabled');
+    const blueskyCheckbox = document.getElementById('bluesky-enabled');
+    const mastodonOptions = document.getElementById('mastodon-options');
+    const blueskyOptions = document.getElementById('bluesky-options');
+    const mastodonText = document.getElementById('mastodon-text');
+    const blueskyText = document.getElementById('bluesky-text');
+    
+    // Sync post text between services when both are enabled
+    function syncPostText(source) {
+        const target = source === mastodonText ? blueskyText : mastodonText;
+        if (mastodonCheckbox.checked && blueskyCheckbox.checked) {
+            target.value = source.value;
+        }
+    }
+    
+    mastodonText.addEventListener('input', () => syncPostText(mastodonText));
+    blueskyText.addEventListener('input', () => syncPostText(blueskyText));
+    
     // Handle Mastodon checkbox
-    document.getElementById('mastodon-enabled').addEventListener('change', async (e) => {
-        const mastodonOptions = document.getElementById('mastodon-options');
+    mastodonCheckbox.addEventListener('change', async (e) => {
         if (e.target.checked) {
             mastodonOptions.classList.remove('hidden');
-            // Focus on post text
-            document.getElementById('mastodon-text').focus();
+            // If Bluesky is also checked, sync the text
+            if (blueskyCheckbox.checked && blueskyText.value) {
+                mastodonText.value = blueskyText.value;
+            }
+            // Focus on post text if it's empty
+            if (!mastodonText.value) {
+                mastodonText.focus();
+            }
             // Resize window to accommodate extra fields
             try {
                 await window.go.main.App.ResizeWindow(true);
@@ -47,11 +71,44 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         } else {
             mastodonOptions.classList.add('hidden');
-            // Resize window back to normal
+            // Resize window back if no services are checked
+            if (!blueskyCheckbox.checked) {
+                try {
+                    await window.go.main.App.ResizeWindow(false);
+                } catch (err) {
+                    console.error('Failed to resize window:', err);
+                }
+            }
+        }
+    });
+    
+    // Handle Bluesky checkbox
+    blueskyCheckbox.addEventListener('change', async (e) => {
+        if (e.target.checked) {
+            blueskyOptions.classList.remove('hidden');
+            // If Mastodon is also checked, sync the text
+            if (mastodonCheckbox.checked && mastodonText.value) {
+                blueskyText.value = mastodonText.value;
+            }
+            // Focus on post text if it's empty
+            if (!blueskyText.value) {
+                blueskyText.focus();
+            }
+            // Resize window to accommodate extra fields
             try {
-                await window.go.main.App.ResizeWindow(false);
+                await window.go.main.App.ResizeWindow(true);
             } catch (err) {
                 console.error('Failed to resize window:', err);
+            }
+        } else {
+            blueskyOptions.classList.add('hidden');
+            // Resize window back if no services are checked
+            if (!mastodonCheckbox.checked) {
+                try {
+                    await window.go.main.App.ResizeWindow(false);
+                } catch (err) {
+                    console.error('Failed to resize window:', err);
+                }
             }
         }
     });
@@ -246,7 +303,9 @@ async function handleUpload(e) {
         private: form.private.checked,
         mastodonEnabled: form['mastodon-enabled'].checked,
         mastodonText: form['mastodon-text'].value.trim(),
-        mastodonVisibility: form['mastodon-visibility'].value
+        mastodonVisibility: form['mastodon-visibility'].value,
+        blueskyEnabled: form['bluesky-enabled'].checked,
+        blueskyText: form['bluesky-text'].value.trim()
     };
     
     // Show progress

@@ -11,6 +11,8 @@ export namespace main {
 	    mastodonEnabled: boolean;
 	    mastodonText: string;
 	    mastodonVisibility: string;
+	    blueskyEnabled: boolean;
+	    blueskyText: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PhotoMetadata(source);
@@ -28,6 +30,8 @@ export namespace main {
 	        this.mastodonEnabled = source["mastodonEnabled"];
 	        this.mastodonText = source["mastodonText"];
 	        this.mastodonVisibility = source["mastodonVisibility"];
+	        this.blueskyEnabled = source["blueskyEnabled"];
+	        this.blueskyText = source["blueskyText"];
 	    }
 	}
 	export class UploadResult {

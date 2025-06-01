@@ -31,6 +31,8 @@ type PhotoMetadata struct {
 	MastodonEnabled    bool     `json:"mastodonEnabled"`
 	MastodonText       string   `json:"mastodonText"`
 	MastodonVisibility string   `json:"mastodonVisibility"`
+	BlueskyEnabled     bool     `json:"blueskyEnabled"`
+	BlueskyText        string   `json:"blueskyText"`
 }
 
 // UploadResult represents the result of an upload operation
@@ -387,17 +389,33 @@ func (a *App) Upload(metadata PhotoMetadata) (*UploadResult, error) {
 		args = append(args, "--private")
 	}
 	
+	// Add social media flags if enabled
+	postText := ""
+	
+	// Determine post text (prefer whichever has content, or use the first one)
+	if metadata.MastodonEnabled && metadata.MastodonText != "" {
+		postText = metadata.MastodonText
+	} else if metadata.BlueskyEnabled && metadata.BlueskyText != "" {
+		postText = metadata.BlueskyText
+	}
+	
 	// Add Mastodon flags if enabled
 	if metadata.MastodonEnabled {
 		args = append(args, "--mastodon")
 		
-		if metadata.MastodonText != "" {
-			args = append(args, "--post", metadata.MastodonText)
-		}
-		
 		if metadata.MastodonVisibility != "" {
 			args = append(args, "--visibility", metadata.MastodonVisibility)
 		}
+	}
+	
+	// Add Bluesky flags if enabled
+	if metadata.BlueskyEnabled {
+		args = append(args, "--bluesky")
+	}
+	
+	// Add shared post text if either service is enabled and has text
+	if postText != "" && (metadata.MastodonEnabled || metadata.BlueskyEnabled) {
+		args = append(args, "--post", postText)
 	}
 
 	// Add the file path at the end

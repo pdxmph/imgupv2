@@ -87,6 +87,22 @@
                 </div>
             </div>
             
+            <div class="field">
+                <label>
+                    <input type="checkbox" id="bluesky-enabled" name="bluesky-enabled">
+                    Post to Bluesky
+                </label>
+            </div>
+            
+            <div id="bluesky-options" class="hidden">
+                <div class="field">
+                    <label for="bluesky-text">Post Text</label>
+                    <textarea id="bluesky-text" name="bluesky-text" rows="3" 
+                              placeholder="Your Bluesky post (tags will be converted to hashtags)"></textarea>
+                    <small>All Bluesky posts are public. 300 character limit.</small>
+                </div>
+            </div>
+            
             <div class="buttons">
                 <button type="submit" id="upload-btn">Upload</button>
                 <button type="button" id="cancel-btn">Cancel</button>
