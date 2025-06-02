@@ -107,15 +107,23 @@
                 <button type="submit" id="upload-btn">Upload</button>
                 <button type="button" id="cancel-btn">Cancel</button>
             </div>
-            
-            <div id="progress" class="hidden">
-                <div class="spinner"></div>
-                <span>Uploading...</span>
-            </div>
-            
-            <div id="error-message" class="error hidden"></div>
-            <div id="success-message" class="success hidden"></div>
         </form>
+        
+        <!-- Move progress and messages outside form for overlay positioning -->
+        <div id="progress" class="overlay hidden">
+            <div class="overlay-content">
+                <div class="spinner"></div>
+                <span id="progress-text">Uploading...</span>
+            </div>
+        </div>
+        
+        <div id="error-message" class="overlay error hidden">
+            <div class="overlay-content"></div>
+        </div>
+        
+        <div id="success-message" class="overlay success hidden">
+            <div class="overlay-content"></div>
+        </div>
     </div>
     
     <script src="./main.js"></script>

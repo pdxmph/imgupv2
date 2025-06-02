@@ -204,6 +204,63 @@ imgup config set template.custom "![%alt|description|title|filename%](%image_url
 imgup config show
 ```
 
+## Duplicate Detection (Experimental)
+
+⚠️ **WARNING: This is an experimental feature. Use at your own risk.**
+
+imgupv2 includes an experimental duplicate detection feature that can prevent re-uploading images you've already uploaded. This feature is **OFF by default** due to potential issues.
+
+### Known Issues
+
+- May incorrectly identify your images as duplicates of other users' photos if not properly configured
+- Requires re-authentication after enabling to fetch your user ID
+- Cache database can become corrupted
+- Should only be used if you understand the risks
+
+### How to Enable
+
+```bash
+# Enable duplicate checking
+imgup config set default.duplicate_check true
+
+# IMPORTANT: Re-authenticate to properly configure user ID
+imgup auth flickr  # or smugmug
+
+# Verify it's working correctly
+imgup check photo.jpg
+```
+
+### How to Disable
+
+```bash
+# Disable duplicate checking
+imgup config set default.duplicate_check false
+```
+
+### Troubleshooting Duplicate Detection
+
+If you experience issues:
+
+1. **Clean the cache database**:
+   ```bash
+   rm ~/.config/imgupv2/uploads.db
+   ```
+
+2. **Re-authenticate** to ensure proper user ID:
+   ```bash
+   imgup auth flickr
+   ```
+
+3. **Check for corrupted entries**:
+   ```bash
+   sqlite3 ~/.config/imgupv2/uploads.db "SELECT * FROM uploads;"
+   ```
+
+4. **Force upload** if needed:
+   ```bash
+   imgup upload --force photo.jpg
+   ```
+
 ## Troubleshooting
 
 ### "Both Flickr and SmugMug are configured" error

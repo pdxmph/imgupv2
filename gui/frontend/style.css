@@ -193,6 +193,102 @@ button {
     text-align: center;
 }
 
+/* Overlay system for centered messages */
+.overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    backdrop-filter: blur(2px);
+    animation: fadeIn 0.2s ease-out;
+}
+
+.overlay.hidden {
+    animation: fadeOut 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes fadeOut {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}
+
+.overlay-content {
+    background: white;
+    padding: 24px 32px;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    text-align: center;
+    min-width: 200px;
+    max-width: 400px;
+    animation: scaleIn 0.2s ease-out;
+}
+
+@keyframes scaleIn {
+    from {
+        transform: scale(0.9);
+        opacity: 0;
+    }
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* Specific overlay styles */
+.overlay.error .overlay-content {
+    background: #ffebee;
+    color: #c62828;
+    border: 1px solid #ef5350;
+}
+
+.overlay.success .overlay-content {
+    background: #e8f5e9;
+    color: #2e7d32;
+    border: 1px solid #66bb6a;
+}
+
+.overlay.success.duplicate .overlay-content {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
+/* Progress overlay specific styling */
+#progress .overlay-content {
+    background: white;
+    padding: 32px;
+}
+
+#progress .spinner {
+    margin: 0 auto 16px;
+}
+
+#progress span {
+    display: block;
+    color: #666;
+    font-size: 14px;
+    font-weight: 500;
+}
+
 .error {
     background: #ffebee;
     color: #c62828;
@@ -262,6 +358,7 @@ button {
     justify-content: center;
     z-index: 9999;
     transition: opacity 0.3s ease;
+    backdrop-filter: blur(2px);
 }
 
 #loading-overlay.fade-out {
@@ -271,6 +368,10 @@ button {
 
 .loading-content {
     text-align: center;
+    background: white;
+    padding: 32px;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
 }
 
 .loading-content .spinner {
@@ -280,4 +381,77 @@ button {
 .loading-content span {
     color: #666;
     font-size: 14px;
+    font-weight: 500;
+}
+
+/* Duplicate indicator styles */
+.success.duplicate {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
+.duplicate-icon {
+    display: inline-block;
+    margin-right: 4px;
+    font-size: 20px;
+    vertical-align: middle;
+    animation: rotate 2s ease-in-out;
+}
+
+@keyframes rotate {
+    0% {
+        transform: rotate(0deg);
+    }
+    50% {
+        transform: rotate(180deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/* Re-upload button styles */
+.reupload-button {
+    background: #fff;
+    color: #007aff;
+    border: 1px solid #007aff;
+    margin-left: 8px;
+}
+
+.reupload-button:hover {
+    background: #007aff;
+    color: white;
+}
+
+.reupload-button:active {
+    background: #005ecb;
+    border-color: #005ecb;
+}
+
+/* Buttons in overlay context */
+.overlay-content button {
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1px solid #ddd;
+    background: white;
+}
+
+.overlay-content button:hover {
+    background: #f5f5f5;
+}
+
+.overlay-content .reupload-button {
+    background: #007aff;
+    color: white;
+    border-color: #007aff;
+}
+
+.overlay-content .reupload-button:hover {
+    background: #005ecb;
+    border-color: #005ecb;
 }

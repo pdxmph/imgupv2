@@ -38,6 +38,9 @@ export namespace main {
 	    success: boolean;
 	    snippet: string;
 	    error?: string;
+	    duplicate: boolean;
+	    forceAvailable: boolean;
+	    socialPostStatus?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new UploadResult(source);
@@ -48,6 +51,9 @@ export namespace main {
 	        this.success = source["success"];
 	        this.snippet = source["snippet"];
 	        this.error = source["error"];
+	        this.duplicate = source["duplicate"];
+	        this.forceAvailable = source["forceAvailable"];
+	        this.socialPostStatus = source["socialPostStatus"];
 	    }
 	}
 

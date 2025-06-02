@@ -433,3 +433,152 @@ func getMapKeys(m map[string]interface{}) []string {
 	}
 	return keys
 }
+
+// AlbumImagesResponse represents the response from the album images endpoint
+type AlbumImagesResponse struct {
+	Response struct {
+		AlbumImage []AlbumImageDetail `json:"AlbumImage"`
+		Pages      struct {
+			Total        int    `json:"Total"`
+			Start        int    `json:"Start"`
+			Count        int    `json:"Count"`
+			RequestedCount int  `json:"RequestedCount"`
+			NextPage     string `json:"NextPage,omitempty"`
+		} `json:"Pages"`
+	} `json:"Response"`
+}
+
+// AlbumImageDetail represents detailed image information including MD5
+type AlbumImageDetail struct {
+	URI        string `json:"Uri"`
+	WebURI     string `json:"WebUri"`
+	FileName   string `json:"FileName"`
+	ImageKey   string `json:"ImageKey"`
+	UploadKey  string `json:"UploadKey,omitempty"`
+	ArchivedMD5 string `json:"ArchivedMd5,omitempty"`
+	Title      string `json:"Title,omitempty"`
+	Caption    string `json:"Caption,omitempty"`
+	Keywords   string `json:"Keywords,omitempty"`
+	DateTimeOriginal string `json:"DateTimeOriginal,omitempty"`
+	DateTimeUploaded string `json:"DateTimeUploaded,omitempty"`
+	Format     string `json:"Format,omitempty"`
+	OriginalSize int64 `json:"OriginalSize,omitempty"`
+}
+
+// GetAlbumImages retrieves all images from an album with MD5 hashes
+func (api *SmugMugAPI) GetAlbumImages(ctx context.Context, albumKey string) ([]AlbumImageDetail, error) {
+	var allImages []AlbumImageDetail
+	
+	// Start with the first page, requesting MD5 and other metadata
+	nextPage := fmt.Sprintf("%s/api/v2/album/%s!images?count=100&_expand=ArchivedMd5,FileName,ImageKey,UploadKey,DateTimeOriginal,DateTimeUploaded,Keywords,OriginalSize",
+		smugmugAPIURL, albumKey)
+	
+	for nextPage != "" {
+		images, next, err := api.fetchAlbumImagesPage(ctx, nextPage)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch album images: %w", err)
+		}
+		
+		allImages = append(allImages, images...)
+		
+		// Check if there's a next page
+		if next != "" && !strings.HasPrefix(next, "http") {
+			// If it's a relative URL, make it absolute
+			nextPage = smugmugAPIURL + next
+		} else {
+			nextPage = next
+		}
+	}
+	
+	return allImages, nil
+}
+
+// fetchAlbumImagesPage fetches a single page of album images
+func (api *SmugMugAPI) fetchAlbumImagesPage(ctx context.Context, pageURL string) ([]AlbumImageDetail, string, error) {
+	// Create OAuth1 config and client
+	config := oauth1.Config{
+		ConsumerKey:    api.ConsumerKey,
+		ConsumerSecret: api.ConsumerSecret,
+	}
+	
+	token := oauth1.NewToken(api.AccessToken, api.AccessSecret)
+	httpClient := config.Client(ctx, token)
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", pageURL, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	req.Header.Set("Accept", "application/json")
+	
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get album images: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+	
+	var result AlbumImagesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, "", fmt.Errorf("failed to parse response: %w", err)
+	}
+	
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Fetched %d images from album\n", len(result.Response.AlbumImage))
+		if len(result.Response.AlbumImage) > 0 {
+			fmt.Fprintf(os.Stderr, "DEBUG: First image MD5: %s, FileName: %s\n", 
+				result.Response.AlbumImage[0].ArchivedMD5,
+				result.Response.AlbumImage[0].FileName)
+		}
+	}
+	
+	return result.Response.AlbumImage, result.Response.Pages.NextPage, nil
+}
+
+// SearchAlbumImages searches for images in an album by filename or other criteria
+func (api *SmugMugAPI) SearchAlbumImages(ctx context.Context, albumKey string, query string) ([]AlbumImageDetail, error) {
+	// SmugMug search supports filename queries
+	endpoint := fmt.Sprintf("%s/api/v2/album/%s!images?q=%s&count=100&_expand=ArchivedMd5,FileName,ImageKey,UploadKey,DateTimeOriginal,Keywords",
+		smugmugAPIURL, albumKey, query)
+	
+	// Create OAuth1 config and client
+	config := oauth1.Config{
+		ConsumerKey:    api.ConsumerKey,
+		ConsumerSecret: api.ConsumerSecret,
+	}
+	
+	token := oauth1.NewToken(api.AccessToken, api.AccessSecret)
+	httpClient := config.Client(ctx, token)
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	req.Header.Set("Accept", "application/json")
+	
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search album images: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+	
+	var result AlbumImagesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Search found %d images matching query '%s'\n", 
+			len(result.Response.AlbumImage), query)
+	}
+	
+	return result.Response.AlbumImage, nil
+}

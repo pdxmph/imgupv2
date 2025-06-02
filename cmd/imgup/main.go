@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/pdxmph/imgupv2/pkg/backends"
 	"github.com/pdxmph/imgupv2/pkg/config"
+	"github.com/pdxmph/imgupv2/pkg/duplicate"
 	"github.com/pdxmph/imgupv2/pkg/services/bluesky"
 	"github.com/pdxmph/imgupv2/pkg/services/mastodon"
 	"github.com/pdxmph/imgupv2/pkg/templates"
@@ -44,6 +45,10 @@ var (
 	
 	// Testing flag
 	dryRun           bool
+	
+	// Duplicate detection flags
+	force            bool
+	duplicateInfo    bool  // GUI flag to get duplicate status in JSON
 )
 
 func main() {
@@ -101,6 +106,22 @@ with support for metadata embedding and multiple output formats.`,
 	uploadCmd.Flags().StringVar(&post, "post", "", "Text for social media post (shared by Mastodon and Bluesky)")
 	uploadCmd.Flags().StringVar(&visibility, "visibility", "public", "Mastodon post visibility: public, unlisted, followers, direct (Mastodon only)")
 	uploadCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be posted without actually posting")
+	
+	// Add duplicate detection flags
+	uploadCmd.Flags().BoolVar(&duplicateInfo, "duplicate-info", false, "Include duplicate status in JSON output (for GUI)")
+	uploadCmd.Flags().BoolVar(&force, "force", false, "Force upload even if duplicate is found")
+
+	// Check command
+	checkCmd := &cobra.Command{
+		Use:   "check [image]",
+		Short: "Check if an image has already been uploaded",
+		Args:  cobra.ExactArgs(1),
+		Run:   checkCommand,
+	}
+	
+	// Add check flags
+	checkCmd.Flags().StringVar(&outputFormat, "format", "url", "Output format: url, markdown, html, json")
+	checkCmd.Flags().StringVar(&service, "service", "", "Upload service: flickr or smugmug (auto-detected if not specified)")
 
 	// Config command
 	configCmd := &cobra.Command{
@@ -137,7 +158,7 @@ with support for metadata embedding and multiple output formats.`,
 	}
 
 	// Add commands to root
-	rootCmd.AddCommand(authCmd, uploadCmd, configCmd, versionCmd)
+	rootCmd.AddCommand(authCmd, uploadCmd, checkCmd, configCmd, versionCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -208,11 +229,20 @@ func authFlickr() error {
 	cfg.Flickr.AccessToken = token.Token
 	cfg.Flickr.AccessSecret = token.TokenSecret
 
+	// Get user ID using the new tokens
+	api := backends.NewFlickrAPI(&cfg.Flickr)
+	userID, err := api.GetUserID(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get user ID: %w", err)
+	}
+	cfg.Flickr.UserID = userID
+
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Println("Tokens saved to config!")
+	fmt.Printf("Authentication successful! Tokens saved to config.\n")
+	fmt.Printf("Authenticated as user: %s\n", userID)
 	return nil
 }
 
@@ -447,6 +477,10 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
+	
+	// Variables to track upload results
+	var photoID, photoURL, imageURL string
+	var isDuplicate bool
 
 	// Apply defaults from config if flags weren't explicitly set
 	if !cmd.Flags().Changed("format") && cfg.Default.Format != "" {
@@ -507,103 +541,200 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 	}
 
 
+	// Always check for duplicates unless --force is specified or disabled in config
+	if !force && cfg.IsDuplicateCheckEnabled() {
+		var checker *duplicate.RemoteChecker
+		
+		switch service {
+		case "flickr":
+			checker, err = duplicate.SetupFlickrDuplicateChecker(&cfg.Flickr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error setting up duplicate checker: %v\n", err)
+				os.Exit(1)
+			}
+			
+		case "smugmug":
+			checker, err = duplicate.SetupSmugMugDuplicateChecker(&cfg.SmugMug)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error setting up duplicate checker: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		defer checker.Close()
+
+		// Silent duplicate checking - no verbose messages
+		ctx := context.Background()
+		
+		existingUpload, err := checker.Check(ctx, imagePath)
+		if err != nil {
+			// Only show error if it's significant
+			if duplicateInfo {
+				// For GUI mode, we need to handle errors differently
+				fmt.Fprintf(os.Stderr, "Error checking for duplicate: %v\n", err)
+			}
+			// Continue with upload if duplicate check fails
+		} else if existingUpload != nil {
+			// Found a duplicate! Set our variables instead of exiting
+			isDuplicate = true
+			photoID = existingUpload.RemoteID
+			photoURL = existingUpload.RemoteURL
+			imageURL = existingUpload.ImageURL
+		}
+	}
+
 	// Perform the upload based on service
 	ctx := context.Background()
-	var photoID, photoURL, imageURL string
 	
-	fmt.Printf("Uploading %s to %s...\n", imagePath, strings.Title(service))
+	// Calculate MD5 for the file (used for machine tags and caching)
+	fileInfo, err := duplicate.GetFileInfo(imagePath)
+	if err != nil {
+		// Log warning but continue - upload can still work without MD5
+		fmt.Fprintf(os.Stderr, "Warning: Failed to calculate file hash: %v\n", err)
+	}
 	
-	switch service {
-	case "flickr":
-		uploader := backends.NewFlickrUploader(
-			cfg.Flickr.ConsumerKey,
-			cfg.Flickr.ConsumerSecret,
-			cfg.Flickr.AccessToken,
-			cfg.Flickr.AccessSecret,
-		)
-		result, err := uploader.Upload(ctx, imagePath, title, description, tags, isPrivate)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Upload failed: %v\n", err)
-			os.Exit(1)
-		}
-		photoID = result.PhotoID
-		photoURL = result.URL
-		imageURL = result.ImageURL
+	// Only perform actual upload if not a duplicate
+	if !isDuplicate {
+		// Silent operation - no verbose messages
 		
-	case "smugmug":
-		uploader := backends.NewSmugMugUploader(
-			cfg.SmugMug.ConsumerKey,
-			cfg.SmugMug.ConsumerSecret,
-			cfg.SmugMug.AccessToken,
-			cfg.SmugMug.AccessSecret,
-			cfg.SmugMug.AlbumID,
-		)
-		result, err := uploader.Upload(ctx, imagePath, title, description, tags, isPrivate)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Upload failed: %v\n", err)
-			os.Exit(1)
+		switch service {
+		case "flickr":
+			// Add machine tag for duplicate detection if we have MD5
+			uploadTags := tags
+			if fileInfo != nil && fileInfo.MD5 != "" {
+				machineTag := fmt.Sprintf("imgupv2:checksum=%s", fileInfo.MD5)
+				uploadTags = append(uploadTags, machineTag)
+			}
+			
+			uploader := backends.NewFlickrUploader(
+				cfg.Flickr.ConsumerKey,
+				cfg.Flickr.ConsumerSecret,
+				cfg.Flickr.AccessToken,
+				cfg.Flickr.AccessSecret,
+			)
+			result, err := uploader.Upload(ctx, imagePath, title, description, uploadTags, isPrivate)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Upload failed: %v\n", err)
+				os.Exit(1)
+			}
+			photoID = result.PhotoID
+			photoURL = result.URL
+			imageURL = result.ImageURL
+			
+		case "smugmug":
+			uploader := backends.NewSmugMugUploader(
+				cfg.SmugMug.ConsumerKey,
+				cfg.SmugMug.ConsumerSecret,
+				cfg.SmugMug.AccessToken,
+				cfg.SmugMug.AccessSecret,
+				cfg.SmugMug.AlbumID,
+			)
+			result, err := uploader.Upload(ctx, imagePath, title, description, tags, isPrivate)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Upload failed: %v\n", err)
+				os.Exit(1)
+			}
+			photoID = result.ImageKey
+			photoURL = result.URL
+			imageURL = result.ImageURL
 		}
-		photoID = result.ImageKey
-		photoURL = result.URL
-		imageURL = result.ImageURL
+
+		// Always record successful upload in cache for future duplicate detection
+		// Reuse the fileInfo we calculated earlier
+		if fileInfo != nil {
+			// Create cache and record the upload
+			cache, err := duplicate.NewSQLiteCache(duplicate.DefaultCachePath())
+			if err == nil {
+				defer cache.Close()
+				
+				upload := &duplicate.Upload{
+					FileMD5:    fileInfo.MD5,
+					Service:    service,
+					RemoteID:   photoID,
+					RemoteURL:  photoURL,
+					ImageURL:   imageURL,
+					UploadTime: time.Now(),
+					Filename:   filepath.Base(imagePath),
+					FileSize:   fileInfo.Size,
+				}
+				
+				if err := cache.Record(upload); err != nil {
+					// Log error but don't fail the upload
+					fmt.Fprintf(os.Stderr, "Warning: Failed to cache upload: %v\n", err)
+				}
+			}
+		}
 	}
 
 	// Output result using templates
-	template, exists := cfg.Templates[outputFormat]
-	if !exists {
-		fmt.Fprintf(os.Stderr, "Unknown format: %s\n", outputFormat)
-		fmt.Fprintf(os.Stderr, "Available formats: ")
-		var formats []string
-		for k := range cfg.Templates {
-			formats = append(formats, k)
+	
+	// For GUI mode with --duplicate-info and JSON format, output special format
+	if duplicateInfo && outputFormat == "json" {
+		jsonOutput := map[string]interface{}{
+			"duplicate": isDuplicate,
+			"url":       photoURL,
+			"imageUrl":  imageURL,
+			"photoId":   photoID,
 		}
-		fmt.Fprintf(os.Stderr, "%s\n", strings.Join(formats, ", "))
-		os.Exit(1)
-	}
-	
-	if os.Getenv("IMGUP_DEBUG") != "" {
-		fmt.Fprintf(os.Stderr, "DEBUG: Using template for format '%s': %s\n", outputFormat, template)
-	}
+		jsonBytes, _ := json.MarshalIndent(jsonOutput, "", "  ")
+		fmt.Println(string(jsonBytes))
+	} else {
+		// Normal output using templates
+		template, exists := cfg.Templates[outputFormat]
+		if !exists {
+			fmt.Fprintf(os.Stderr, "Unknown format: %s\n", outputFormat)
+			fmt.Fprintf(os.Stderr, "Available formats: ")
+			var formats []string
+			for k := range cfg.Templates {
+				formats = append(formats, k)
+			}
+			fmt.Fprintf(os.Stderr, "%s\n", strings.Join(formats, ", "))
+			os.Exit(1)
+		}
+		
+		if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Using template for format '%s': %s\n", outputFormat, template)
+		}
 
-	// Build template variables
-	filename := filepath.Base(imagePath)
-	filenameNoExt := strings.TrimSuffix(filename, filepath.Ext(filename))
-	
-	// Build edit URL based on service
-	editURL := ""
-	if service == "flickr" {
-		editURL = "https://www.flickr.com/photos/upload/edit/?ids=" + photoID
-	}
-	// SmugMug doesn't have a direct edit URL pattern we can construct
-	
-	// Debug output
-	if os.Getenv("IMGUP_DEBUG") != "" {
-		fmt.Fprintf(os.Stderr, "DEBUG: Building template variables:\n")
-		fmt.Fprintf(os.Stderr, "  photoID: %s\n", photoID)
-		fmt.Fprintf(os.Stderr, "  photoURL: %s\n", photoURL)
-		fmt.Fprintf(os.Stderr, "  imageURL: %s\n", imageURL)
-		fmt.Fprintf(os.Stderr, "  title: %s\n", title)
-		fmt.Fprintf(os.Stderr, "  description: %s\n", description)
-		fmt.Fprintf(os.Stderr, "  altText: %s\n", altText)
-		fmt.Fprintf(os.Stderr, "  tags: %v\n", tags)
-		fmt.Fprintf(os.Stderr, "  filenameNoExt: %s\n", filenameNoExt)
-	}
-	
-	vars := templates.Variables{
-		PhotoID:     photoID,
-		URL:         photoURL,
-		ImageURL:    imageURL,
-		EditURL:     editURL,
-		Filename:    filenameNoExt,
-		Title:       title,
-		Description: description,
-		Alt:         altText,
-		Tags:        tags,
-	}
+		// Build template variables
+		filename := filepath.Base(imagePath)
+		filenameNoExt := strings.TrimSuffix(filename, filepath.Ext(filename))
+		
+		// Build edit URL based on service
+		editURL := ""
+		if service == "flickr" {
+			editURL = "https://www.flickr.com/photos/upload/edit/?ids=" + photoID
+		}
+		// SmugMug doesn't have a direct edit URL pattern we can construct
+		
+		// Debug output
+		if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Building template variables:\n")
+			fmt.Fprintf(os.Stderr, "  photoID: %s\n", photoID)
+			fmt.Fprintf(os.Stderr, "  photoURL: %s\n", photoURL)
+			fmt.Fprintf(os.Stderr, "  imageURL: %s\n", imageURL)
+			fmt.Fprintf(os.Stderr, "  title: %s\n", title)
+			fmt.Fprintf(os.Stderr, "  description: %s\n", description)
+			fmt.Fprintf(os.Stderr, "  altText: %s\n", altText)
+			fmt.Fprintf(os.Stderr, "  tags: %v\n", tags)
+			fmt.Fprintf(os.Stderr, "  filenameNoExt: %s\n", filenameNoExt)
+		}
+		
+		vars := templates.Variables{
+			PhotoID:     photoID,
+			URL:         photoURL,
+			ImageURL:    imageURL,
+			EditURL:     editURL,
+			Filename:    filenameNoExt,
+			Title:       title,
+			Description: description,
+			Alt:         altText,
+			Tags:        tags,
+		}
 
-	// Process and output
-	output := templates.Process(template, vars)
-	fmt.Println(output)
+		// Process and output
+		output := templates.Process(template, vars)
+		fmt.Println(output)
+	}
 
 	// Warn if using direct visibility with Bluesky
 	if postToBluesky && visibility == "direct" {
@@ -618,6 +749,8 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 		if err := postToMastodonService(cfg, service, photoID, photoURL, title, description, altText, tags); err != nil {
 			fmt.Fprintf(os.Stderr, "Mastodon post failed: %v\n", err)
 			// Don't exit - the upload was successful
+		} else {
+			fmt.Println("Posted to Mastodon successfully!")
 		}
 	} else if postToMastodon && dryRun {
 		fmt.Printf("\n[DRY RUN] Would post to Mastodon:\n")
@@ -638,6 +771,8 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 		if err := postToBlueskyService(cfg, service, photoID, photoURL, title, description, altText, tags); err != nil {
 			fmt.Fprintf(os.Stderr, "Bluesky post failed: %v\n", err)
 			// Don't exit - the upload was successful
+		} else {
+			fmt.Println("Posted to Bluesky successfully!")
 		}
 	} else if postToBluesky && dryRun {
 		fmt.Printf("\n[DRY RUN] Would post to Bluesky:\n")
@@ -690,7 +825,7 @@ func configShow() error {
 	fmt.Println("Configuration:")
 	
 	// Show defaults if any are set
-	if cfg.Default.Format != "" || cfg.Default.Service != "" {
+	if cfg.Default.Format != "" || cfg.Default.Service != "" || cfg.Default.DuplicateCheck != nil {
 		fmt.Printf("  Default:\n")
 		if cfg.Default.Format != "" {
 			fmt.Printf("    Format: %s\n", cfg.Default.Format)
@@ -698,6 +833,7 @@ func configShow() error {
 		if cfg.Default.Service != "" {
 			fmt.Printf("    Service: %s\n", cfg.Default.Service)
 		}
+		fmt.Printf("    Duplicate Check: %v\n", cfg.IsDuplicateCheckEnabled())
 		fmt.Println()
 	}
 	
@@ -753,6 +889,10 @@ func configSet(key, value string) error {
 		cfg.Default.Format = value
 	case key == "default.service":
 		cfg.Default.Service = value
+	case key == "default.duplicate_check":
+		// Parse boolean value
+		boolValue := value == "true" || value == "yes" || value == "on" || value == "1"
+		cfg.Default.DuplicateCheck = &boolValue
 	case key == "flickr.key":
 		cfg.Flickr.ConsumerKey = value
 	case key == "flickr.secret":
@@ -876,19 +1016,16 @@ func postToMastodonService(cfg *config.Config, service string, photoID string, p
 	}
 	
 	// Upload the resized image from Flickr to Mastodon
-	fmt.Println("Downloading resized image from Flickr...")
 	mediaID, err := client.UploadMediaFromURL(imageURL, mastodonAltText)
 	if err != nil {
 		return fmt.Errorf("failed to upload media: %w", err)
 	}
 	
 	// Post the status
-	fmt.Printf("Posting to Mastodon (visibility: %s)...\n", visibility)
 	if err := client.PostStatus(statusText, []string{mediaID}, visibility, photoTags); err != nil {
 		return fmt.Errorf("failed to post status: %w", err)
 	}
 	
-	fmt.Println("Posted to Mastodon!")
 	return nil
 }
 
@@ -1012,18 +1149,142 @@ func postToBlueskyService(cfg *config.Config, service string, photoID string, ph
 	}
 	
 	// Upload the image from the photo service to Bluesky
-	fmt.Println("Downloading image for Bluesky...")
 	blob, _, err := client.UploadMediaFromURL(imageURL, blueskyAltText)
 	if err != nil {
 		return fmt.Errorf("failed to upload media: %w", err)
 	}
 	
 	// Post the status
-	fmt.Println("Posting to Bluesky...")
 	if err := client.PostStatus(statusText, []bluesky.BlobResponse{*blob}, []string{blueskyAltText}, photoTags); err != nil {
 		return fmt.Errorf("failed to post status: %w", err)
 	}
 	
-	fmt.Println("Posted to Bluesky!")
 	return nil
+}
+
+func checkCommand(cmd *cobra.Command, args []string) {
+	imagePath := args[0]
+
+	// Check if file exists
+	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Error: File not found: %s\n", imagePath)
+		os.Exit(1)
+	}
+
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Apply defaults from config if flags weren't explicitly set
+	if !cmd.Flags().Changed("format") && cfg.Default.Format != "" {
+		outputFormat = cfg.Default.Format
+	}
+	if !cmd.Flags().Changed("service") && cfg.Default.Service != "" {
+		service = cfg.Default.Service
+	}
+
+	// Determine which service to use (same logic as upload command)
+	if service == "" {
+		hasFlickr := cfg.Flickr.AccessToken != "" && cfg.Flickr.AccessSecret != ""
+		hasSmugMug := cfg.SmugMug.AccessToken != "" && cfg.SmugMug.AccessSecret != ""
+		
+		if hasFlickr && hasSmugMug {
+			if cfg.Default.Service != "" {
+				service = cfg.Default.Service
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: Both Flickr and SmugMug are configured. Please specify --service or set a default:\n")
+				fmt.Fprintf(os.Stderr, "  imgup config set default.service flickr\n")
+				fmt.Fprintf(os.Stderr, "  imgup config set default.service smugmug\n")
+				os.Exit(1)
+			}
+		} else if hasFlickr {
+			service = "flickr"
+		} else if hasSmugMug {
+			service = "smugmug"
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: Not authenticated. Run 'imgup auth flickr' or 'imgup auth smugmug' first.\n")
+			os.Exit(1)
+		}
+	}
+
+	// Create duplicate checker based on service
+	ctx := context.Background()
+	var checker *duplicate.RemoteChecker
+	
+	switch service {
+	case "flickr":
+		checker, err = duplicate.SetupFlickrDuplicateChecker(&cfg.Flickr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error setting up duplicate checker: %v\n", err)
+			os.Exit(1)
+		}
+		
+	case "smugmug":
+		checker, err = duplicate.SetupSmugMugDuplicateChecker(&cfg.SmugMug)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error setting up duplicate checker: %v\n", err)
+			os.Exit(1)
+		}
+		
+	default:
+		fmt.Fprintf(os.Stderr, "Error: Unknown service: %s\n", service)
+		os.Exit(1)
+	}
+	defer checker.Close()
+
+	// Check for duplicate
+	
+	upload, err := checker.Check(ctx, imagePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error checking for duplicate: %v\n", err)
+		os.Exit(1)
+	}
+
+	if upload == nil {
+		// Not found - no output for silent operation
+		os.Exit(1)  // Exit with error code to indicate not found
+	}
+
+	// Image found! Output using the same template system as upload
+	
+	// Output result using templates
+	template, exists := cfg.Templates[outputFormat]
+	if !exists {
+		fmt.Fprintf(os.Stderr, "Unknown format: %s\n", outputFormat)
+		fmt.Fprintf(os.Stderr, "Available formats: ")
+		var formats []string
+		for k := range cfg.Templates {
+			formats = append(formats, k)
+		}
+		fmt.Fprintf(os.Stderr, "%s\n", strings.Join(formats, ", "))
+		os.Exit(1)
+	}
+
+	// Build template variables
+	filename := filepath.Base(imagePath)
+	filenameNoExt := strings.TrimSuffix(filename, filepath.Ext(filename))
+	
+	// Build edit URL based on service
+	editURL := ""
+	if service == "flickr" {
+		editURL = "https://www.flickr.com/photos/upload/edit/?ids=" + upload.RemoteID
+	}
+	
+	vars := templates.Variables{
+		PhotoID:     upload.RemoteID,
+		URL:         upload.RemoteURL,
+		ImageURL:    upload.ImageURL,
+		EditURL:     editURL,
+		Filename:    filenameNoExt,
+		Title:       "", // We don't have title in cache
+		Description: "", // We don't have description in cache
+		Alt:         "", // We don't have alt text in cache
+		Tags:        []string{}, // We don't have tags in cache
+	}
+
+	result := templates.Process(template, vars)
+	fmt.Println(result)
 }

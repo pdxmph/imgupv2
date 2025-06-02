@@ -19,8 +19,9 @@ type Config struct {
 
 // DefaultConfig holds default settings
 type DefaultConfig struct {
-	Format  string `json:"format,omitempty"`
-	Service string `json:"service,omitempty"`
+	Format         string `json:"format,omitempty"`
+	Service        string `json:"service,omitempty"`
+	DuplicateCheck *bool  `json:"duplicate_check,omitempty"`  // nil means use default (true)
 }
 
 // FlickrConfig holds Flickr-specific configuration
@@ -29,6 +30,7 @@ type FlickrConfig struct {
 	ConsumerSecret string `json:"consumer_secret"`
 	AccessToken    string `json:"access_token,omitempty"`
 	AccessSecret   string `json:"access_secret,omitempty"`
+	UserID         string `json:"user_id,omitempty"`
 }
 
 // MastodonConfig holds Mastodon-specific configuration
@@ -100,6 +102,15 @@ func Load() (*Config, error) {
 	}
 	
 	return &cfg, nil
+}
+
+// IsDuplicateCheckEnabled returns whether duplicate checking is enabled
+// Defaults to false if not explicitly set (opt-in feature)
+func (c *Config) IsDuplicateCheckEnabled() bool {
+	if c.Default.DuplicateCheck == nil {
+		return false  // Default to disabled for safety
+	}
+	return *c.Default.DuplicateCheck
 }
 
 // Save saves the configuration

@@ -37,9 +37,12 @@ type PhotoMetadata struct {
 
 // UploadResult represents the result of an upload operation
 type UploadResult struct {
-	Success bool   `json:"success"`
-	Snippet string `json:"snippet"`
-	Error   string `json:"error,omitempty"`
+	Success    bool   `json:"success"`
+	Snippet    string `json:"snippet"`
+	Error      string `json:"error,omitempty"`
+	Duplicate  bool   `json:"duplicate"`
+	ForceAvailable bool `json:"forceAvailable"` // Indicates --force can be used
+	SocialPostStatus string `json:"socialPostStatus,omitempty"` // Status of social media posting
 }
 
 // NewApp creates a new App application struct
@@ -296,6 +299,17 @@ func (a *App) getPhotoFromPhotosApp() (*PhotoMetadata, error) {
 	
 	// Re-embed metadata using exiftool if we have any
 	if title != "" || desc != "" || len(keywords) > 0 {
+		// Find exiftool with full path
+		exiftoolPath := "/usr/local/bin/exiftool"
+		if _, err := os.Stat(exiftoolPath); err != nil {
+			// Try homebrew location
+			exiftoolPath = "/opt/homebrew/bin/exiftool"
+			if _, err := os.Stat(exiftoolPath); err != nil {
+				// Fall back to PATH
+				exiftoolPath = "exiftool"
+			}
+		}
+		
 		exifArgs := []string{"-overwrite_original"}
 		
 		if title != "" {
@@ -313,7 +327,7 @@ func (a *App) getPhotoFromPhotosApp() (*PhotoMetadata, error) {
 		
 		exifArgs = append(exifArgs, exportedPath)
 		
-		cmd := exec.Command("exiftool", exifArgs...)
+		cmd := exec.Command(exiftoolPath, exifArgs...)
 		if err := cmd.Run(); err != nil {
 			// Non-fatal: continue even if metadata embedding fails
 			fmt.Fprintf(os.Stderr, "Warning: failed to embed metadata: %v\n", err)
@@ -360,8 +374,9 @@ func (a *App) Upload(metadata PhotoMetadata) (*UploadResult, error) {
 	// Build imgup command
 	args := []string{"upload"}
 	
-	// Add format flag
-	args = append(args, "--format", metadata.Format)
+	// Always use JSON format with duplicate-info to get structured response
+	args = append(args, "--format", "json")
+	args = append(args, "--duplicate-info")
 	
 	// Only add title if not empty
 	if metadata.Title != "" {
@@ -459,23 +474,119 @@ func (a *App) Upload(metadata PhotoMetadata) (*UploadResult, error) {
 		}, nil
 	}
 	
-	// Extract just the final line (the snippet) from stdout
+	// Extract the JSON response from stdout
 	outputStr := strings.TrimSpace(string(output))
-	lines := strings.Split(outputStr, "\n")
 	snippet := ""
-	if len(lines) > 0 {
-		// The snippet should be the last non-empty line
-		for i := len(lines) - 1; i >= 0; i-- {
-			if strings.TrimSpace(lines[i]) != "" {
-				snippet = lines[i]
-				break
+	isDuplicate := false
+	socialPostStatus := ""
+	
+	// Find the JSON response - it should be a complete JSON object
+	// Look for a line that starts with { and parse from there
+	jsonStart := strings.LastIndex(outputStr, "{")
+	if jsonStart >= 0 {
+		jsonStr := outputStr[jsonStart:]
+		// Find the matching closing brace
+		braceCount := 0
+		jsonEnd := -1
+		for i, ch := range jsonStr {
+			if ch == '{' {
+				braceCount++
+			} else if ch == '}' {
+				braceCount--
+				if braceCount == 0 {
+					jsonEnd = i + 1
+					break
+				}
 			}
 		}
+		
+		if jsonEnd > 0 {
+			jsonLine := jsonStr[:jsonEnd]
+			var jsonResponse struct {
+				URL       string `json:"url"`
+				Duplicate bool   `json:"duplicate"`
+				PhotoID   string `json:"photoId"`
+				ImageURL  string `json:"imageUrl,omitempty"`
+			}
+			if err := json.Unmarshal([]byte(jsonLine), &jsonResponse); err == nil {
+				isDuplicate = jsonResponse.Duplicate
+				
+				// Check for social media posting output after JSON
+				remainingOutput := outputStr[jsonStart+jsonEnd:]
+				if remainingOutput != "" {
+					// Check for successful posts
+					if strings.Contains(remainingOutput, "Posted to Mastodon successfully!") {
+						socialPostStatus = "mastodon_success"
+					} else if strings.Contains(remainingOutput, "Mastodon post failed:") {
+						socialPostStatus = "mastodon_failed"
+					}
+					
+					// Check for Bluesky (can be both)
+					if strings.Contains(remainingOutput, "Posted to Bluesky successfully!") {
+						if socialPostStatus == "mastodon_success" {
+							socialPostStatus = "both_success"
+						} else {
+							socialPostStatus = "bluesky_success"
+						}
+					} else if strings.Contains(remainingOutput, "Bluesky post failed:") {
+						if socialPostStatus == "mastodon_failed" {
+							socialPostStatus = "both_failed"
+						} else if socialPostStatus == "mastodon_success" {
+							socialPostStatus = "mastodon_success_bluesky_failed"
+						} else {
+							socialPostStatus = "bluesky_failed"
+						}
+					}
+				}
+				
+				// Convert to requested format
+				switch metadata.Format {
+				case "url":
+					snippet = jsonResponse.URL
+				case "markdown":
+					// Basic markdown format
+					title := metadata.Title
+					if title == "" {
+						title = "Image"
+					}
+					snippet = fmt.Sprintf("![%s](%s)", title, jsonResponse.URL)
+				case "html":
+					// Basic HTML format
+					altText := metadata.Alt
+					if altText == "" {
+						altText = metadata.Title
+						if altText == "" {
+							altText = "Image"
+						}
+					}
+					snippet = fmt.Sprintf(`<img src="%s" alt="%s">`, jsonResponse.URL, altText)
+				case "json":
+					// Keep the original JSON
+					snippet = jsonLine
+				default:
+					// Default to URL
+					snippet = jsonResponse.URL
+				}
+			} else {
+				// If JSON parsing fails, log the error and return the raw output
+				fmt.Fprintf(os.Stderr, "Failed to parse JSON response: %v\nJSON: %s\n", err, jsonLine)
+				snippet = outputStr
+			}
+		} else {
+			// Could not find complete JSON, use raw output
+			snippet = outputStr
+		}
+	} else {
+		// No JSON found, use raw output
+		snippet = outputStr
 	}
 
 	return &UploadResult{
 		Success: true,
 		Snippet: snippet,
+		Duplicate: isDuplicate,
+		ForceAvailable: isDuplicate, // Can use --force if it's a duplicate
+		SocialPostStatus: socialPostStatus,
 	}, nil
 }
 
@@ -483,4 +594,191 @@ func (a *App) Upload(metadata PhotoMetadata) (*UploadResult, error) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// ForceUpload handles upload with --force flag for duplicates
+func (a *App) ForceUpload(metadata PhotoMetadata) (*UploadResult, error) {
+	// Build imgup command with --force flag
+	args := []string{"upload", "--force"}
+	
+	// Always use JSON format with duplicate-info to get structured response
+	args = append(args, "--format", "json")
+	args = append(args, "--duplicate-info")
+	
+	// Only add title if not empty
+	if metadata.Title != "" {
+		args = append(args, "--title", metadata.Title)
+	}
+	
+	// Only add alt text if not empty  
+	if metadata.Alt != "" {
+		args = append(args, "--alt", metadata.Alt)
+	}
+	
+	// Only add description if not empty
+	if metadata.Description != "" {
+		args = append(args, "--description", metadata.Description)
+	}
+
+	// Add tags if present
+	if len(metadata.Tags) > 0 {
+		// Join tags with commas as per the help text
+		args = append(args, "--tags", strings.Join(metadata.Tags, ","))
+	}
+	
+	// Add private flag if set
+	if metadata.Private {
+		args = append(args, "--private")
+	}
+	
+	// Add social media flags if enabled
+	postText := ""
+	
+	// Determine post text (prefer whichever has content, or use the first one)
+	if metadata.MastodonEnabled && metadata.MastodonText != "" {
+		postText = metadata.MastodonText
+	} else if metadata.BlueskyEnabled && metadata.BlueskyText != "" {
+		postText = metadata.BlueskyText
+	}
+	
+	// Add Mastodon flags if enabled
+	if metadata.MastodonEnabled {
+		args = append(args, "--mastodon")
+		
+		if metadata.MastodonVisibility != "" {
+			args = append(args, "--visibility", metadata.MastodonVisibility)
+		}
+	}
+	
+	// Add Bluesky flags if enabled
+	if metadata.BlueskyEnabled {
+		args = append(args, "--bluesky")
+	}
+	
+	// Add shared post text if either service is enabled and has text
+	if postText != "" && (metadata.MastodonEnabled || metadata.BlueskyEnabled) {
+		args = append(args, "--post", postText)
+	}
+
+	// Add the file path at the end
+	args = append(args, metadata.Path)
+
+	// Find imgup binary - check multiple locations
+	imgupPath := "imgup"
+	
+	// Check common locations in order of preference
+	searchPaths := []string{
+		filepath.Join(os.Getenv("HOME"), "go", "bin", "imgup"),  // ~/go/bin/imgup
+		filepath.Join("..", "imgup"),                             // parent directory (for development)
+		"/opt/homebrew/bin/imgup",                               // Apple Silicon homebrew
+		"/usr/local/bin/imgup",                                   // Intel homebrew
+		"imgup",                                                  // rely on PATH
+	}
+	
+	for _, path := range searchPaths {
+		if fileExists(path) {
+			imgupPath = path
+			break
+		}
+	}
+
+	// Run imgup CLI
+	cmd := exec.Command(imgupPath, args...)
+	
+	// Use Output() which waits for the command to complete
+	output, err := cmd.Output()
+	if err != nil {
+		// Get stderr if available
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return &UploadResult{
+				Success: false,
+				Error:   fmt.Sprintf("Upload failed: %s\nStderr: %s", err.Error(), string(exitErr.Stderr)),
+			}, nil
+		}
+		return &UploadResult{
+			Success: false,
+			Error:   fmt.Sprintf("Upload failed: %s", err.Error()),
+		}, nil
+	}
+	
+	// Extract the JSON response from stdout
+	outputStr := strings.TrimSpace(string(output))
+	snippet := ""
+	
+	// Find the JSON response - it should be a complete JSON object
+	jsonStart := strings.LastIndex(outputStr, "{")
+	if jsonStart >= 0 {
+		jsonStr := outputStr[jsonStart:]
+		// Find the matching closing brace
+		braceCount := 0
+		jsonEnd := -1
+		for i, ch := range jsonStr {
+			if ch == '{' {
+				braceCount++
+			} else if ch == '}' {
+				braceCount--
+				if braceCount == 0 {
+					jsonEnd = i + 1
+					break
+				}
+			}
+		}
+		
+		if jsonEnd > 0 {
+			jsonLine := jsonStr[:jsonEnd]
+			var jsonResponse struct {
+				URL       string `json:"url"`
+				Duplicate bool   `json:"duplicate"`
+				PhotoID   string `json:"photoId"`
+				ImageURL  string `json:"imageUrl,omitempty"`
+			}
+			if err := json.Unmarshal([]byte(jsonLine), &jsonResponse); err == nil {
+				// Convert to requested format
+				switch metadata.Format {
+				case "url":
+					snippet = jsonResponse.URL
+				case "markdown":
+					// Basic markdown format
+					title := metadata.Title
+					if title == "" {
+						title = "Image"
+					}
+					snippet = fmt.Sprintf("![%s](%s)", title, jsonResponse.URL)
+				case "html":
+					// Basic HTML format
+					altText := metadata.Alt
+					if altText == "" {
+						altText = metadata.Title
+						if altText == "" {
+							altText = "Image"
+						}
+					}
+					snippet = fmt.Sprintf(`<img src="%s" alt="%s">`, jsonResponse.URL, altText)
+				case "json":
+					// Keep the original JSON
+					snippet = jsonLine
+				default:
+					// Default to URL
+					snippet = jsonResponse.URL
+				}
+			} else {
+				// If JSON parsing fails, log the error and return the raw output
+				fmt.Fprintf(os.Stderr, "Failed to parse JSON response: %v\nJSON: %s\n", err, jsonLine)
+				snippet = outputStr
+			}
+		} else {
+			// Could not find complete JSON, use raw output
+			snippet = outputStr
+		}
+	} else {
+		// No JSON found, use raw output
+		snippet = outputStr
+	}
+
+	return &UploadResult{
+		Success: true,
+		Snippet: snippet,
+		Duplicate: false, // Force upload always creates new upload
+		ForceAvailable: false,
+	}, nil
 }
