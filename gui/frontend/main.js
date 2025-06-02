@@ -177,7 +177,6 @@ async function loadSelectedPhoto() {
         if (metadata && metadata.path) {
             currentPhotoMetadata = metadata;
             populateForm(metadata);
-            loadPreview(metadata.path);
             
             // Show a note if this is from Photos
             if (metadata.isTemporary) {
@@ -212,19 +211,60 @@ function populateForm(metadata) {
     document.getElementById('tags').value = (metadata.tags || []).join(' ');
     document.getElementById('format').value = metadata.format || 'markdown';
     document.getElementById('private').checked = metadata.private || false;
+    
+    // Display thumbnail and file info
+    if (metadata.thumbnail) {
+        loadPreview(metadata);
+    }
 }
 
-function loadPreview(path) {
+function loadPreview(metadata) {
     const preview = document.getElementById('preview');
     const container = document.getElementById('preview-container');
+    const filename = document.getElementById('filename');
+    const dimensions = document.getElementById('dimensions');
     
-    // Create a file URL for the image
-    preview.src = 'file://' + path;
-    container.classList.remove('hidden');
+    if (metadata.thumbnail) {
+        // Use the base64 thumbnail from metadata
+        preview.src = metadata.thumbnail;
+        
+        // Display filename
+        const name = metadata.path.split('/').pop();
+        filename.textContent = name;
+        
+        // Display dimensions and file size
+        if (metadata.imageWidth && metadata.imageHeight) {
+            const sizeText = formatFileSize(metadata.fileSize);
+            dimensions.textContent = `${metadata.imageWidth}×${metadata.imageHeight} • ${sizeText}`;
+        }
+        
+        container.classList.remove('hidden');
+    } else if (metadata.path) {
+        // Fall back to file:// URL if no thumbnail
+        preview.src = 'file://' + metadata.path;
+        filename.textContent = metadata.path.split('/').pop();
+        dimensions.textContent = '';
+        container.classList.remove('hidden');
+    }
     
     preview.onerror = () => {
         container.classList.add('hidden');
     };
+}
+
+// Helper to format file size
+function formatFileSize(bytes) {
+    if (!bytes) return '';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+    
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex++;
+    }
+    
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
 }
 
 async function setupTagAutocomplete() {

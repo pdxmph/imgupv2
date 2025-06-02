@@ -23,6 +23,16 @@ type Upload struct {
 	FileSize   int64
 }
 
+// Thumbnail represents a cached thumbnail
+type Thumbnail struct {
+	FileMD5       string
+	ThumbnailData string // base64 encoded
+	Width         int
+	Height        int
+	FileSize      int64
+	CreatedAt     time.Time
+}
+
 // SQLiteCache implements local duplicate checking via SQLite
 type SQLiteCache struct {
 	db *sql.DB
@@ -66,6 +76,15 @@ func (c *SQLiteCache) init() error {
 
 	CREATE INDEX IF NOT EXISTS idx_service_id ON uploads(service, remote_id);
 	CREATE INDEX IF NOT EXISTS idx_filename ON uploads(filename);
+
+	CREATE TABLE IF NOT EXISTS thumbnails (
+		file_md5 TEXT PRIMARY KEY,
+		thumbnail_data TEXT NOT NULL,
+		width INTEGER,
+		height INTEGER,
+		file_size INTEGER,
+		created_at INTEGER
+	);
 	`
 
 	_, err := c.db.Exec(schema)
@@ -207,6 +226,62 @@ func (c *SQLiteCache) FindByFilename(ctx context.Context, filename string) ([]*U
 	}
 
 	return uploads, rows.Err()
+}
+
+// GetThumbnail retrieves a cached thumbnail by MD5 hash
+func (c *SQLiteCache) GetThumbnail(ctx context.Context, md5Hash string) (*Thumbnail, error) {
+	query := `
+		SELECT file_md5, thumbnail_data, width, height, file_size, created_at
+		FROM thumbnails
+		WHERE file_md5 = ?
+	`
+
+	var thumb Thumbnail
+	var createdAt int64
+
+	err := c.db.QueryRowContext(ctx, query, md5Hash).Scan(
+		&thumb.FileMD5,
+		&thumb.ThumbnailData,
+		&thumb.Width,
+		&thumb.Height,
+		&thumb.FileSize,
+		&createdAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query thumbnail: %w", err)
+	}
+
+	thumb.CreatedAt = time.Unix(createdAt, 0)
+	return &thumb, nil
+}
+
+// SaveThumbnail stores a thumbnail in the cache
+func (c *SQLiteCache) SaveThumbnail(thumb *Thumbnail) error {
+	query := `
+		INSERT OR REPLACE INTO thumbnails
+		(file_md5, thumbnail_data, width, height, file_size, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`
+
+	_, err := c.db.Exec(
+		query,
+		thumb.FileMD5,
+		thumb.ThumbnailData,
+		thumb.Width,
+		thumb.Height,
+		thumb.FileSize,
+		thumb.CreatedAt.Unix(),
+	)
+
+	if err != nil {
+		return fmt.Errorf("save thumbnail: %w", err)
+	}
+
+	return nil
 }
 
 // Close closes the database connection

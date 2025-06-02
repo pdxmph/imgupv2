@@ -89,7 +89,6 @@ gh release create "$VERSION" \
   --title "$VERSION" \
   --notes "$(git tag -l --format='%(contents)' "$VERSION")" \
   dist/imgupv2-${VERSION}-macOS.tar.gz \
-  dist/imgupv2_Darwin_x86_64.tar.gz \
   dist/imgupv2_Linux_x86_64.tar.gz \
   dist/imgupv2_Linux_arm64.tar.gz \
   dist/checksums-complete.txt

@@ -22,12 +22,38 @@ body {
     margin-bottom: 20px;
 }
 
+#preview-container .preview-content {
+    display: inline-block;
+    position: relative;
+}
+
 #preview {
     max-width: 100%;
-    max-height: 200px;
+    max-height: 120px;
     display: inline-block;
     border-radius: 4px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.preview-info {
+    margin-top: 8px;
+    text-align: left;
+}
+
+.filename {
+    font-weight: 500;
+    color: #333;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+}
+
+.dimensions {
+    font-size: 13px;
+    color: #666;
+    margin-top: 2px;
 }
 
 .field {

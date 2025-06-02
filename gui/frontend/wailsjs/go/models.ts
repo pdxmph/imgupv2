@@ -13,6 +13,11 @@ export namespace main {
 	    mastodonVisibility: string;
 	    blueskyEnabled: boolean;
 	    blueskyText: string;
+	    thumbnail: string;
+	    imageWidth: number;
+	    imageHeight: number;
+	    fileSize: number;
+	    isTemporary: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new PhotoMetadata(source);
@@ -32,6 +37,11 @@ export namespace main {
 	        this.mastodonVisibility = source["mastodonVisibility"];
 	        this.blueskyEnabled = source["blueskyEnabled"];
 	        this.blueskyText = source["blueskyText"];
+	        this.thumbnail = source["thumbnail"];
+	        this.imageWidth = source["imageWidth"];
+	        this.imageHeight = source["imageHeight"];
+	        this.fileSize = source["fileSize"];
+	        this.isTemporary = source["isTemporary"];
 	    }
 	}
 	export class UploadResult {

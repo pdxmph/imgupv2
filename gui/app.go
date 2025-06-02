@@ -12,11 +12,14 @@ import (
 	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/pdxmph/imgupv2/pkg/duplicate"
+	"github.com/pdxmph/imgupv2/pkg/thumbnail"
 )
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx       context.Context
+	thumbGen  *thumbnail.Generator
 }
 
 // PhotoMetadata represents the metadata for a photo
@@ -33,6 +36,12 @@ type PhotoMetadata struct {
 	MastodonVisibility string   `json:"mastodonVisibility"`
 	BlueskyEnabled     bool     `json:"blueskyEnabled"`
 	BlueskyText        string   `json:"blueskyText"`
+	// New fields for thumbnail display
+	Thumbnail    string `json:"thumbnail"`    // base64 encoded thumbnail
+	ImageWidth   int    `json:"imageWidth"`   // Original image width
+	ImageHeight  int    `json:"imageHeight"`  // Original image height
+	FileSize     int64  `json:"fileSize"`     // File size in bytes
+	IsTemporary  bool   `json:"isTemporary"`  // True if from Photos app
 }
 
 // UploadResult represents the result of an upload operation
@@ -54,6 +63,15 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	
+	// Initialize thumbnail generator with cache
+	cache, err := duplicate.NewSQLiteCache(duplicate.DefaultCachePath())
+	if err == nil {
+		a.thumbGen = thumbnail.NewGenerator(cache)
+	} else {
+		// Fall back to no-cache generator
+		a.thumbGen = thumbnail.NewGenerator(nil)
+	}
 	
 	// Show the window initially if a photo is selected
 	go func() {
@@ -191,6 +209,16 @@ func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
 					}
 				}
 			}
+		}
+	}
+
+	// Generate thumbnail if possible
+	if a.thumbGen != nil {
+		if result, err := a.thumbGen.Generate(context.Background(), metadata.Path, 100); err == nil {
+			metadata.Thumbnail = "data:image/jpeg;base64," + result.ThumbnailData
+			metadata.ImageWidth = result.Info.Width
+			metadata.ImageHeight = result.Info.Height
+			metadata.FileSize = result.Info.FileSize
 		}
 	}
 
@@ -346,7 +374,17 @@ func (a *App) getPhotoFromPhotosApp() (*PhotoMetadata, error) {
 		Tags:        keywords,
 		Format:      "markdown", // default
 		Private:     false,      // default to public
-		// Mark this as a temp file that needs cleanup
+		IsTemporary: true,       // Mark this as a temp file that needs cleanup
+	}
+	
+	// Generate thumbnail if possible
+	if a.thumbGen != nil {
+		if result, err := a.thumbGen.Generate(context.Background(), exportedPath, 100); err == nil {
+			metadata.Thumbnail = "data:image/jpeg;base64," + result.ThumbnailData
+			metadata.ImageWidth = result.Info.Width
+			metadata.ImageHeight = result.Info.Height
+			metadata.FileSize = result.Info.FileSize
+		}
 	}
 	
 	// Schedule cleanup after 60 seconds (giving time for upload)
