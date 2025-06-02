@@ -211,7 +211,7 @@ imgup config show
 imgupv2 includes an experimental duplicate detection feature that can prevent re-uploading images you've already uploaded. This feature is **OFF by default** due to potential issues.
 
 ### Known Issues
-
+- You can use it to get snippets and links back quickly if you've already uploaded an image, but it breaks with social posting.
 - May incorrectly identify your images as duplicates of other users' photos if not properly configured
 - Requires re-authentication after enabling to fetch your user ID
 - Cache database can become corrupted
