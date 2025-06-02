@@ -579,6 +579,14 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 			photoID = existingUpload.RemoteID
 			photoURL = existingUpload.RemoteURL
 			imageURL = existingUpload.ImageURL
+			
+			if os.Getenv("IMGUP_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "DEBUG: Duplicate detected!\n")
+				fmt.Fprintf(os.Stderr, "  Service: %s\n", existingUpload.Service)
+				fmt.Fprintf(os.Stderr, "  RemoteID: %s\n", photoID)
+				fmt.Fprintf(os.Stderr, "  RemoteURL: %s\n", photoURL)
+				fmt.Fprintf(os.Stderr, "  ImageURL: %s\n", imageURL)
+			}
 		}
 	}
 
@@ -768,6 +776,9 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 	
 	// Post to Bluesky if requested
 	if postToBluesky && !dryRun {
+		if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Starting Bluesky post with photoID=%s, service=%s\n", photoID, service)
+		}
 		if err := postToBlueskyService(cfg, service, photoID, photoURL, title, description, altText, tags); err != nil {
 			fmt.Fprintf(os.Stderr, "Bluesky post failed: %v\n", err)
 			// Don't exit - the upload was successful
@@ -942,10 +953,27 @@ func maskString(s string) string {
 	return s[:4] + "****" + s[len(s)-4:]
 }
 
+// getMapKeys is a helper function to get the keys from a map (for debugging)
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 func postToMastodonService(cfg *config.Config, service string, photoID string, photoURL string, photoTitle string, photoDescription string, altText string, photoTags []string) error {
 	// Check if Mastodon is configured
 	if cfg.Mastodon.AccessToken == "" {
 		return fmt.Errorf("not authenticated with Mastodon. Run 'imgup auth mastodon' first")
+	}
+	
+	// Validate we have required photo data
+	if photoID == "" {
+		return fmt.Errorf("cannot post to Mastodon: no photo ID available")
+	}
+	if photoURL == "" {
+		return fmt.Errorf("cannot post to Mastodon: no photo URL available")
 	}
 	
 	// Create Mastodon client
@@ -966,19 +994,51 @@ func postToMastodonService(cfg *config.Config, service string, photoID string, p
 	statusText += "\n\n" + photoURL
 	
 	// Get a suitable image URL for Mastodon based on the service
-	var imageURL string
+	imageURL, err := getImageURLForSocialPosting(cfg, service, photoID)
+	if err != nil {
+		return fmt.Errorf("failed to get image for social posting: %w", err)
+	}
 	
-	if service == "flickr" {
-		// Get photo sizes from Flickr to find a good size for Mastodon
+	// Determine alt text: use explicit alt text, fall back to description
+	mastodonAltText := altText
+	if mastodonAltText == "" && photoDescription != "" {
+		mastodonAltText = photoDescription
+	}
+	
+	// Upload the resized image from photo service to Mastodon
+	mediaID, err := client.UploadMediaFromURL(imageURL, mastodonAltText)
+	if err != nil {
+		return fmt.Errorf("failed to upload media: %w", err)
+	}
+	
+	// Post the status
+	if err := client.PostStatus(statusText, []string{mediaID}, visibility, photoTags); err != nil {
+		return fmt.Errorf("failed to post status: %w", err)
+	}
+	
+	return nil
+}
+
+// getImageURLForSocialPosting fetches an appropriate image URL for social media posting
+// from either Flickr or SmugMug using the photo ID
+func getImageURLForSocialPosting(cfg *config.Config, service string, photoID string) (string, error) {
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: getImageURLForSocialPosting called with service=%s, photoID=%s\n", service, photoID)
+	}
+	
+	switch service {
+	case "flickr":
+		// Get photo sizes from Flickr to find a good size for social media
 		api := backends.NewFlickrAPI(&cfg.Flickr)
 		sizes, err := api.GetPhotoSizes(context.Background(), photoID)
 		if err != nil {
-			return fmt.Errorf("failed to get photo sizes from Flickr: %w", err)
+			return "", fmt.Errorf("failed to get photo sizes from Flickr: %w", err)
 		}
 		
-		// Find a good size for Mastodon (prefer Large or Medium)
+		// Find a good size for social media (prefer Large or Medium)
+		var imageURL string
 		for _, size := range sizes {
-			// Prioritize these sizes for Mastodon
+			// Prioritize these sizes for social media
 			if size.Label == "Large" || size.Label == "Large 1024" {
 				imageURL = size.Source
 				break
@@ -997,36 +1057,78 @@ func postToMastodonService(cfg *config.Config, service string, photoID string, p
 				imageURL = sizes[0].Source
 			}
 		}
-	} else if service == "smugmug" {
-		// For SmugMug, we already have the imageURL from the upload result
-		// Just need to get it from where we stored it
-		// SmugMug provides good-sized images already, so we can use them directly
-		// The imageURL is already set from the upload response
-		return fmt.Errorf("SmugMug to Mastodon posting not yet implemented")
+		
+		if imageURL == "" {
+			return "", fmt.Errorf("no suitable image size found from Flickr")
+		}
+		
+		return imageURL, nil
+		
+	case "smugmug":
+		// For SmugMug, we need to construct the proper URI from the photo ID
+		// The photo ID from SmugMug is typically the AlbumImage URI
+		api := backends.NewSmugMugAPI(&cfg.SmugMug)
+		
+		// Get image sizes
+		sizes, err := api.GetImageSizes(context.Background(), photoID)
+		if err != nil {
+			return "", fmt.Errorf("failed to get image sizes from SmugMug (photo ID: %s): %w", photoID, err)
+		}
+		
+		// Extract the image URL from the response
+		// SmugMug's response structure is complex, so we need to navigate it
+		if respData, ok := sizes["Response"].(map[string]interface{}); ok {
+			// Try to find the image URL in various possible locations
+			var imageURL string
+			
+			if os.Getenv("IMGUP_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "DEBUG: SmugMug response keys: %v\n", getMapKeys(respData))
+			}
+			
+			// Check for AlbumImage.Image.ArchivedUri (for large size)
+			if albumImage, ok := respData["AlbumImage"].(map[string]interface{}); ok {
+				if img, ok := albumImage["Image"].(map[string]interface{}); ok {
+					if archivedUri, ok := img["ArchivedUri"].(string); ok && archivedUri != "" {
+						imageURL = archivedUri
+						if os.Getenv("IMGUP_DEBUG") != "" {
+							fmt.Fprintf(os.Stderr, "DEBUG: Found ArchivedUri: %s\n", imageURL)
+						}
+					}
+					
+					// If no ArchivedUri, try ImageDownloadUrl
+					if imageURL == "" {
+						if downloadUrl, ok := img["ImageDownloadUrl"].(string); ok && downloadUrl != "" {
+							imageURL = downloadUrl
+							if os.Getenv("IMGUP_DEBUG") != "" {
+								fmt.Fprintf(os.Stderr, "DEBUG: Found ImageDownloadUrl: %s\n", imageURL)
+							}
+						}
+					}
+				}
+			}
+			
+			// If still no URL, try the Image object directly
+			if imageURL == "" {
+				if img, ok := respData["Image"].(map[string]interface{}); ok {
+					if archivedUri, ok := img["ArchivedUri"].(string); ok && archivedUri != "" {
+						imageURL = archivedUri
+						if os.Getenv("IMGUP_DEBUG") != "" {
+							fmt.Fprintf(os.Stderr, "DEBUG: Found ArchivedUri in Image: %s\n", imageURL)
+						}
+					}
+				}
+			}
+			
+			if imageURL != "" {
+				return imageURL, nil
+			}
+		}
+		
+		return "", fmt.Errorf("could not extract image URL from SmugMug response - photo ID may be invalid or API response structure changed")
+		
+	default:
+		return "", fmt.Errorf("unsupported service: %s", service)
 	}
-	
-	if imageURL == "" {
-		return fmt.Errorf("no suitable image size found from %s", service)
-	}
-	
-	// Determine alt text: use explicit alt text, fall back to description
-	mastodonAltText := altText
-	if mastodonAltText == "" && photoDescription != "" {
-		mastodonAltText = photoDescription
-	}
-	
-	// Upload the resized image from Flickr to Mastodon
-	mediaID, err := client.UploadMediaFromURL(imageURL, mastodonAltText)
-	if err != nil {
-		return fmt.Errorf("failed to upload media: %w", err)
-	}
-	
-	// Post the status
-	if err := client.PostStatus(statusText, []string{mediaID}, visibility, photoTags); err != nil {
-		return fmt.Errorf("failed to post status: %w", err)
-	}
-	
-	return nil
 }
 
 
@@ -1084,6 +1186,14 @@ func postToBlueskyService(cfg *config.Config, service string, photoID string, ph
 		return fmt.Errorf("not authenticated with Bluesky. Run 'imgup auth bluesky' first")
 	}
 	
+	// Validate we have required photo data
+	if photoID == "" {
+		return fmt.Errorf("cannot post to Bluesky: no photo ID available")
+	}
+	if photoURL == "" {
+		return fmt.Errorf("cannot post to Bluesky: no photo URL available")
+	}
+	
 	// Create Bluesky client
 	client := bluesky.NewClient(cfg.Bluesky.PDS, cfg.Bluesky.Handle, cfg.Bluesky.AppPassword)
 	
@@ -1105,41 +1215,15 @@ func postToBlueskyService(cfg *config.Config, service string, photoID string, ph
 	}
 	
 	// Get a suitable image URL based on the service
-	var imageURL string
-	
-	if service == "flickr" {
-		// Get photo sizes from Flickr to find a good size for Bluesky
-		api := backends.NewFlickrAPI(&cfg.Flickr)
-		sizes, err := api.GetPhotoSizes(context.Background(), photoID)
-		if err != nil {
-			return fmt.Errorf("failed to get photo sizes from Flickr: %w", err)
-		}
-		
-		// Find a suitable size - prefer Large (1024px) or Original
-		for _, size := range sizes {
-			if size.Label == "Large" || size.Label == "Large 1600" || size.Label == "Large 2048" {
-				imageURL = size.Source
-				break
-			}
-		}
-		
-		// Fallback to original if no large size found
-		if imageURL == "" {
-			for _, size := range sizes {
-				if size.Label == "Original" {
-					imageURL = size.Source
-					break
-				}
-			}
-		}
-	} else if service == "smugmug" {
-		// SmugMug provides good-sized images already
-		// The imageURL is already set from the upload response
-		return fmt.Errorf("SmugMug to Bluesky posting not yet implemented")
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Getting image URL for Bluesky posting...\n")
 	}
-	
-	if imageURL == "" {
-		return fmt.Errorf("no suitable image size found from %s", service)
+	imageURL, err := getImageURLForSocialPosting(cfg, service, photoID)
+	if err != nil {
+		return fmt.Errorf("failed to get image for social posting: %w", err)
+	}
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Got image URL: %s\n", imageURL)
 	}
 	
 	// Determine alt text: use explicit alt text, fall back to description

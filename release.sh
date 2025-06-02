@@ -8,6 +8,18 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
+# Ensure version starts with 'v'
+if [[ ! "$VERSION" =~ ^v ]]; then
+    VERSION="v${VERSION}"
+    echo "Note: Added 'v' prefix to version: ${VERSION}"
+fi
+
+# Validate version format
+if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: Version must be in format vX.Y.Z (e.g., v0.7.0)"
+    exit 1
+fi
+
 # Ensure we're in the right directory
 cd "$(dirname "$0")"
 

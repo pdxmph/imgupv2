@@ -389,12 +389,32 @@ func (c *Client) UploadMedia(imagePath string, altText string) (*BlobResponse, s
 
 // UploadMediaFromURL downloads an image from URL and uploads it to Bluesky
 func (c *Client) UploadMediaFromURL(imageURL string, altText string) (*BlobResponse, string, error) {
-	// Download image to temp file
-	resp, err := http.Get(imageURL)
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Bluesky UploadMediaFromURL called with URL: %s\n", imageURL)
+	}
+	
+	// Download image to temp file with timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second, // 30 second timeout for download
+	}
+	
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Downloading image from %s...\n", imageURL)
+	}
+	
+	resp, err := client.Get(imageURL)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to download image: %w", err)
 	}
 	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("failed to download image: status %d", resp.StatusCode)
+	}
+	
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Image downloaded successfully, creating temp file...\n")
+	}
 	
 	// Create temp file
 	tempFile, err := os.CreateTemp("", "bluesky-upload-*.jpg")
@@ -408,6 +428,10 @@ func (c *Client) UploadMediaFromURL(imageURL string, altText string) (*BlobRespo
 	_, err = io.Copy(tempFile, resp.Body)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to save image: %w", err)
+	}
+	
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Temp file created, uploading to Bluesky...\n")
 	}
 	
 	// Upload the temp file
