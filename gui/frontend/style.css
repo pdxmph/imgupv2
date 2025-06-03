@@ -30,14 +30,15 @@ body {
 #preview {
     max-width: 100%;
     max-height: 120px;
-    display: inline-block;
+    display: block;
+    margin: 0 auto;
     border-radius: 4px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
 .preview-info {
     margin-top: 8px;
-    text-align: left;
+    text-align: center;
 }
 
 .filename {
@@ -47,7 +48,6 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 300px;
 }
 
 .dimensions {
@@ -173,6 +173,7 @@ button {
     margin-top: 20px;
 }
 
+/* Spinners */
 .spinner {
     width: 20px;
     height: 20px;
@@ -180,6 +181,18 @@ button {
     border-top: 2px solid #007AFF;
     border-radius: 50%;
     animation: spin 1s linear infinite;
+}
+
+.mini-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid #f3f3f3;
+    border-top: 2px solid #007AFF;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    vertical-align: middle;
+    margin-right: 4px;
 }
 
 @keyframes spin {

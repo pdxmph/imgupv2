@@ -18,6 +18,8 @@ export namespace main {
 	    imageHeight: number;
 	    fileSize: number;
 	    isTemporary: boolean;
+	    isFromPhotos: boolean;
+	    photosIndex: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new PhotoMetadata(source);
@@ -42,6 +44,8 @@ export namespace main {
 	        this.imageHeight = source["imageHeight"];
 	        this.fileSize = source["fileSize"];
 	        this.isTemporary = source["isTemporary"];
+	        this.isFromPhotos = source["isFromPhotos"];
+	        this.photosIndex = source["photosIndex"];
 	    }
 	}
 	export class UploadResult {

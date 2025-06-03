@@ -17,6 +17,67 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.runtime.Quit();
     };
     
+    // Listen for async thumbnail updates
+    window.runtime.EventsOn('thumbnail-ready', (data) => {
+        // Only update if it's for the current photo
+        if (currentPhotoMetadata && data.path === currentPhotoMetadata.path) {
+            const preview = document.getElementById('preview');
+            const container = document.getElementById('preview-container');
+            const dimensions = document.getElementById('dimensions');
+            
+            // Update thumbnail
+            preview.src = data.thumbnail;
+            
+            // Update dimensions and file size
+            if (data.width && data.height) {
+                const sizeText = formatFileSize(data.fileSize);
+                dimensions.textContent = `${data.width}×${data.height} • ${sizeText}`;
+            }
+            
+            // Show container if it was hidden
+            container.classList.remove('hidden');
+        }
+    });
+    
+    // Listen for Photos export completion
+    window.runtime.EventsOn('photos-export-ready', (data) => {
+        if (currentPhotoMetadata && currentPhotoMetadata.isFromPhotos) {
+            // Update the metadata with the exported path
+            currentPhotoMetadata.path = data.path;
+            currentPhotoMetadata.isTemporary = true;
+            
+            // Update the preview
+            const preview = document.getElementById('preview');
+            const dimensions = document.getElementById('dimensions');
+            const filename = document.getElementById('filename');
+            
+            preview.src = data.thumbnail;
+            preview.style.display = 'block';
+            
+            // Update filename to show it's ready
+            filename.textContent = 'Photos Export Ready';
+            
+            if (data.width && data.height) {
+                const sizeText = formatFileSize(data.fileSize);
+                dimensions.textContent = `${data.width}×${data.height} • ${sizeText}`;
+            }
+        }
+    });
+    
+    // Listen for async metadata updates
+    window.runtime.EventsOn('metadata-ready', (data) => {
+        // Update form fields as metadata arrives
+        if (data.title && !document.getElementById('title').value) {
+            document.getElementById('title').value = data.title;
+        }
+        if (data.alt && !document.getElementById('alt').value) {
+            document.getElementById('alt').value = data.alt;
+        }
+        if (data.tags && data.tags.length > 0 && !document.getElementById('tags').value) {
+            document.getElementById('tags').value = data.tags.join(' ');
+        }
+    });
+    
     // Handle Escape key
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
@@ -117,6 +178,27 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Add this function to watch for metadata population
 function watchForMetadata() {
     const overlay = document.getElementById('loading-overlay');
+    
+    // For Finder selections, we're now loading async, so hide overlay immediately
+    // The form is already populated with empty fields, and metadata will arrive async
+    if (currentPhotoMetadata && currentPhotoMetadata.path && !currentPhotoMetadata.isFromPhotos) {
+        overlay.classList.add('fade-out');
+        setTimeout(() => {
+            overlay.classList.add('hidden');
+        }, 300);
+        return;
+    }
+    
+    // For Photos selections, also hide immediately since we have the metadata
+    if (currentPhotoMetadata && currentPhotoMetadata.isFromPhotos) {
+        overlay.classList.add('fade-out');
+        setTimeout(() => {
+            overlay.classList.add('hidden');
+        }, 300);
+        return;
+    }
+    
+    // Only use the old watching logic if we somehow don't have metadata yet
     const fieldsToWatch = ['title', 'alt', 'description', 'tags'];
     let hasMetadata = false;
     
@@ -149,22 +231,19 @@ function watchForMetadata() {
         }
     }, 100);
     
-    // Fallback: hide after 5 seconds regardless
+    // Fallback: hide after 1 second regardless (not 5!)
     setTimeout(() => {
         clearInterval(checkInterval);
         overlay.classList.add('fade-out');
         setTimeout(() => {
             overlay.classList.add('hidden');
         }, 300);
-    }, 5000);
+    }, 1000);
 }
 
 // Extract photo loading logic into a separate function
 async function loadSelectedPhoto() {
     try {
-        // Start watching for metadata immediately
-        watchForMetadata();
-        
         // Clear any previous errors
         document.getElementById('error-message').classList.add('hidden');
         document.getElementById('success-message').classList.add('hidden');
@@ -174,13 +253,16 @@ async function loadSelectedPhoto() {
         
         // Load selected photo metadata
         const metadata = await window.go.main.App.GetSelectedPhoto();
-        if (metadata && metadata.path) {
+        if (metadata && (metadata.path || metadata.isFromPhotos)) {
             currentPhotoMetadata = metadata;
             populateForm(metadata);
             
+            // NOW watch for metadata (after we know what type of selection it is)
+            watchForMetadata();
+            
             // Show a note if this is from Photos
-            if (metadata.isTemporary) {
-                showInfo('Photo exported from Photos.app with metadata preserved');
+            if (metadata.isFromPhotos) {
+                showToast('Photo selected from Photos.app');
             }
             
             // Focus on first editable field
@@ -212,10 +294,8 @@ function populateForm(metadata) {
     document.getElementById('format').value = metadata.format || 'markdown';
     document.getElementById('private').checked = metadata.private || false;
     
-    // Display thumbnail and file info
-    if (metadata.thumbnail) {
-        loadPreview(metadata);
-    }
+    // Always call loadPreview to handle all cases (thumbnail, loading, Photos)
+    loadPreview(metadata);
 }
 
 function loadPreview(metadata) {
@@ -240,15 +320,32 @@ function loadPreview(metadata) {
         
         container.classList.remove('hidden');
     } else if (metadata.path) {
-        // Fall back to file:// URL if no thumbnail
-        preview.src = 'file://' + metadata.path;
-        filename.textContent = metadata.path.split('/').pop();
-        dimensions.textContent = '';
+        // Show placeholder while thumbnail loads
+        preview.src = '';
+        preview.style.display = 'none';
+        
+        // Show filename immediately
+        const name = metadata.path.split('/').pop();
+        filename.textContent = name;
+        dimensions.innerHTML = '<span style="color: #666;">Loading preview...</span>';
+        
+        container.classList.remove('hidden');
+        
+        // The thumbnail will arrive via the 'thumbnail-ready' event
+    } else if (metadata.isFromPhotos) {
+        // Photos selection - show spinner while export happens
+        preview.style.display = 'none';
+        filename.textContent = 'Photos Selection';
+        dimensions.innerHTML = '<div class="mini-spinner"></div> <span style="color: #666;">Exporting from Photos...</span>';
         container.classList.remove('hidden');
     }
     
     preview.onerror = () => {
-        container.classList.add('hidden');
+        preview.style.display = 'none';
+    };
+    
+    preview.onload = () => {
+        preview.style.display = 'block';
     };
 }
 

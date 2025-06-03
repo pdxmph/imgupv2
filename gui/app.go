@@ -42,6 +42,8 @@ type PhotoMetadata struct {
 	ImageHeight  int    `json:"imageHeight"`  // Original image height
 	FileSize     int64  `json:"fileSize"`     // File size in bytes
 	IsTemporary  bool   `json:"isTemporary"`  // True if from Photos app
+	IsFromPhotos bool   `json:"isFromPhotos"` // True if selected from Photos
+	PhotosIndex  int    `json:"photosIndex"`  // Index of photo in Photos selection
 }
 
 // UploadResult represents the result of an upload operation
@@ -75,18 +77,16 @@ func (a *App) startup(ctx context.Context) {
 	
 	// Show the window initially if a photo is selected
 	go func() {
-		// Try a few times with delays to handle launch timing issues
-		for i := 0; i < 3; i++ {
-			time.Sleep(time.Duration(500+i*250) * time.Millisecond)
-			metadata, err := a.GetSelectedPhoto()
-			if err == nil && metadata.Path != "" {
-				// Photo is selected, show the window
-				wailsRuntime.WindowShow(a.ctx)
-				return
-			}
+		// Single quick check after brief delay for app initialization
+		time.Sleep(100 * time.Millisecond)
+		metadata, err := a.GetSelectedPhoto()
+		if err == nil && (metadata.Path != "" || metadata.IsFromPhotos) {
+			// Photo is selected, show the window
+			wailsRuntime.WindowShow(a.ctx)
+		} else {
+			// No photo selected, show window anyway
+			wailsRuntime.WindowShow(a.ctx)
 		}
-		// No photo selected after retries, show window anyway with a message
-		wailsRuntime.WindowShow(a.ctx)
 	}()
 }
 
@@ -123,7 +123,7 @@ func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
 		cmd := exec.Command("osascript", "-e", photosCheckScript)
 		if out, err := cmd.Output(); err == nil && strings.TrimSpace(string(out)) == "has_selection" {
 			// Photos has a selection, use that
-			return a.getPhotoFromPhotosApp()
+			return a.getPhotoMetadataFromPhotosApp()
 		}
 		
 		// Otherwise try Finder
@@ -173,71 +173,82 @@ func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
 		Private: false,      // default to public
 	}
 
-	// Run exiftool to get title/caption/keywords
-	// Use full path to exiftool to avoid PATH issues
-	exiftoolPath := "/usr/local/bin/exiftool"
-	if _, err := os.Stat(exiftoolPath); err != nil {
-		// Try homebrew location
-		exiftoolPath = "/opt/homebrew/bin/exiftool"
+	// Defer exiftool metadata extraction to background
+	go func() {
+		// Use full path to exiftool to avoid PATH issues
+		exiftoolPath := "/usr/local/bin/exiftool"
 		if _, err := os.Stat(exiftoolPath); err != nil {
-			// Fall back to PATH
-			exiftoolPath = "exiftool"
+			// Try homebrew location
+			exiftoolPath = "/opt/homebrew/bin/exiftool"
+			if _, err := os.Stat(exiftoolPath); err != nil {
+				// Fall back to PATH
+				exiftoolPath = "exiftool"
+			}
 		}
-	}
-	cmd := exec.Command(exiftoolPath, "-json", "-Title", "-Caption-Abstract", "-Subject", path)
-	if out, err := cmd.Output(); err == nil {
-		var exifData []map[string]interface{}
-		if err := json.Unmarshal(out, &exifData); err == nil && len(exifData) > 0 {
-			data := exifData[0]
-			
-			if title, ok := data["Title"].(string); ok {
-				metadata.Title = title
-			}
-			
-			if caption, ok := data["Caption-Abstract"].(string); ok {
-				metadata.Alt = caption // Use caption as alt text
-			}
-			
-			// Subject can be string or []interface{}
-			switch v := data["Subject"].(type) {
-			case string:
-				metadata.Tags = strings.Split(v, ",")
-			case []interface{}:
-				for _, tag := range v {
-					if s, ok := tag.(string); ok {
-						metadata.Tags = append(metadata.Tags, strings.TrimSpace(s))
+		cmd := exec.Command(exiftoolPath, "-json", "-Title", "-Caption-Abstract", "-Subject", path)
+		if out, err := cmd.Output(); err == nil {
+			var exifData []map[string]interface{}
+			if err := json.Unmarshal(out, &exifData); err == nil && len(exifData) > 0 {
+				data := exifData[0]
+				
+				metadataUpdate := make(map[string]interface{})
+				
+				if title, ok := data["Title"].(string); ok {
+					metadataUpdate["title"] = title
+				}
+				
+				if caption, ok := data["Caption-Abstract"].(string); ok {
+					metadataUpdate["alt"] = caption
+				}
+				
+				// Subject can be string or []interface{}
+				var tags []string
+				switch v := data["Subject"].(type) {
+				case string:
+					tags = strings.Split(v, ",")
+				case []interface{}:
+					for _, tag := range v {
+						if s, ok := tag.(string); ok {
+							tags = append(tags, strings.TrimSpace(s))
+						}
 					}
+				}
+				if len(tags) > 0 {
+					metadataUpdate["tags"] = tags
+				}
+				
+				// Send metadata update to frontend
+				if len(metadataUpdate) > 0 {
+					wailsRuntime.EventsEmit(a.ctx, "metadata-ready", metadataUpdate)
 				}
 			}
 		}
-	}
+	}()
 
-	// Generate thumbnail if possible
-	if a.thumbGen != nil {
-		if result, err := a.thumbGen.Generate(context.Background(), metadata.Path, 100); err == nil {
-			metadata.Thumbnail = "data:image/jpeg;base64," + result.ThumbnailData
-			metadata.ImageWidth = result.Info.Width
-			metadata.ImageHeight = result.Info.Height
-			metadata.FileSize = result.Info.FileSize
-		}
+	// Return metadata immediately, generate thumbnail async
+	// Schedule thumbnail generation in background
+	if a.thumbGen != nil && metadata.Path != "" {
+		go func() {
+			if result, err := a.thumbGen.Generate(context.Background(), metadata.Path, 100); err == nil {
+				// Send thumbnail update to frontend
+				wailsRuntime.EventsEmit(a.ctx, "thumbnail-ready", map[string]interface{}{
+					"path":      metadata.Path,
+					"thumbnail": "data:image/jpeg;base64," + result.ThumbnailData,
+					"width":     result.Info.Width,
+					"height":    result.Info.Height,
+					"fileSize":  result.Info.FileSize,
+				})
+			}
+		}()
 	}
 
 	return metadata, nil
 }
 
-// getPhotoFromPhotosApp exports the selected photo from Photos.app with metadata
-func (a *App) getPhotoFromPhotosApp() (*PhotoMetadata, error) {
-	// Create temp directory
-	tempDir, err := os.MkdirTemp("", "imgupv2-photos-*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp directory: %w", err)
-	}
-	
-	// AppleScript to export and get metadata from Photos
-	exportScript := fmt.Sprintf(`
-	set tempFolder to "%s"
-	set exportResult to ""
-	
+// getPhotoMetadataFromPhotosApp gets metadata from the selected photo in Photos.app without exporting
+func (a *App) getPhotoMetadataFromPhotosApp() (*PhotoMetadata, error) {
+	// AppleScript to get metadata from Photos WITHOUT exporting
+	metadataScript := `
 	tell application "Photos"
 		set sel to selection
 		if sel is {} then
@@ -258,7 +269,7 @@ func (a *App) getPhotoFromPhotosApp() (*PhotoMetadata, error) {
 			set pDesc to ""
 		end try
 		
-		-- Get keywords (they're already strings)
+		-- Get keywords
 		set pKeywords to {}
 		try
 			set photoKeywords to keywords of photo
@@ -266,9 +277,6 @@ func (a *App) getPhotoFromPhotosApp() (*PhotoMetadata, error) {
 				copy (kw as string) to end of pKeywords
 			end repeat
 		end try
-		
-		-- Export with most recent edits as JPEG
-		export {photo} to (POSIX file tempFolder)
 		
 		-- Build result string with delimiters
 		set exportResult to "TITLE:" & pTitle & "|DESC:" & pDesc & "|KEYWORDS:"
@@ -279,18 +287,16 @@ func (a *App) getPhotoFromPhotosApp() (*PhotoMetadata, error) {
 		end if
 		
 		return exportResult
-	end tell`, tempDir)
+	end tell`
 	
-	cmd := exec.Command("osascript", "-e", exportScript)
-	out, err := cmd.CombinedOutput() // This captures both stdout and stderr
+	cmd := exec.Command("osascript", "-e", metadataScript)
+	out, err := cmd.Output()
 	if err != nil {
-		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("failed to export from Photos: %w\nOutput: %s", err, string(out))
+		return nil, fmt.Errorf("failed to get metadata from Photos: %w", err)
 	}
 	
 	result := strings.TrimSpace(string(out))
 	if strings.HasPrefix(result, "ERROR:") {
-		os.RemoveAll(tempDir)
 		return nil, fmt.Errorf(strings.TrimPrefix(result, "ERROR:"))
 	}
 	
@@ -312,6 +318,83 @@ func (a *App) getPhotoFromPhotosApp() (*PhotoMetadata, error) {
 		}
 	}
 	
+	// Create metadata object
+	metadata := &PhotoMetadata{
+		Path:         "", // Will be set when exported
+		Title:        title,
+		Alt:          desc, // Use description as alt text
+		Description:  desc,
+		Tags:         keywords,
+		Format:       "markdown", // default
+		Private:      false,      // default to public
+		IsFromPhotos: true,
+		PhotosIndex:  1, // Always first in selection for now
+	}
+	
+	// Start async export for preview
+	go func() {
+		exportPath, err := a.exportPhotoFromPhotosApp()
+		if err != nil {
+			fmt.Printf("Failed to export photo for preview: %v\n", err)
+			return
+		}
+		
+		// Generate thumbnail
+		if a.thumbGen != nil {
+			if result, err := a.thumbGen.Generate(context.Background(), exportPath, 100); err == nil {
+				// Send both the path and thumbnail to frontend
+				wailsRuntime.EventsEmit(a.ctx, "photos-export-ready", map[string]interface{}{
+					"path":      exportPath,
+					"thumbnail": "data:image/jpeg;base64," + result.ThumbnailData,
+					"width":     result.Info.Width,
+					"height":    result.Info.Height,
+					"fileSize":  result.Info.FileSize,
+				})
+			}
+		}
+	}()
+	
+	return metadata, nil
+}
+
+// exportPhotoFromPhotosApp exports the selected photo from Photos.app
+func (a *App) exportPhotoFromPhotosApp() (string, error) {
+	// Create temp directory
+	tempDir, err := os.MkdirTemp("", "imgupv2-photos-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	
+	// AppleScript to export from Photos
+	exportScript := fmt.Sprintf(`
+	set tempFolder to "%s"
+	
+	tell application "Photos"
+		set sel to selection
+		if sel is {} then
+			return "ERROR:No photo selected"
+		end if
+		set photo to item 1 of sel
+		
+		-- Export with most recent edits as JPEG
+		export {photo} to (POSIX file tempFolder)
+		
+		return "OK"
+	end tell`, tempDir)
+	
+	cmd := exec.Command("osascript", "-e", exportScript)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		os.RemoveAll(tempDir)
+		return "", fmt.Errorf("failed to export from Photos: %w\nOutput: %s", err, string(out))
+	}
+	
+	result := strings.TrimSpace(string(out))
+	if strings.HasPrefix(result, "ERROR:") {
+		os.RemoveAll(tempDir)
+		return "", fmt.Errorf(strings.TrimPrefix(result, "ERROR:"))
+	}
+	
 	// Wait for export to complete
 	time.Sleep(1 * time.Second)
 	
@@ -319,73 +402,11 @@ func (a *App) getPhotoFromPhotosApp() (*PhotoMetadata, error) {
 	files, err := os.ReadDir(tempDir)
 	if err != nil || len(files) == 0 {
 		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("no file exported from Photos")
+		return "", fmt.Errorf("no file exported from Photos")
 	}
 	
 	// Get the most recent file
 	exportedPath := filepath.Join(tempDir, files[0].Name())
-	
-	// Re-embed metadata using exiftool if we have any
-	if title != "" || desc != "" || len(keywords) > 0 {
-		// Find exiftool with full path
-		exiftoolPath := "/usr/local/bin/exiftool"
-		if _, err := os.Stat(exiftoolPath); err != nil {
-			// Try homebrew location
-			exiftoolPath = "/opt/homebrew/bin/exiftool"
-			if _, err := os.Stat(exiftoolPath); err != nil {
-				// Fall back to PATH
-				exiftoolPath = "exiftool"
-			}
-		}
-		
-		exifArgs := []string{"-overwrite_original"}
-		
-		if title != "" {
-			exifArgs = append(exifArgs, "-XMP-dc:Title="+title)
-		}
-		
-		if desc != "" {
-			exifArgs = append(exifArgs, "-ImageDescription="+desc)
-			exifArgs = append(exifArgs, "-XMP-dc:Description="+desc)
-		}
-		
-		for _, kw := range keywords {
-			exifArgs = append(exifArgs, "-XMP-dc:Subject+="+strings.TrimSpace(kw))
-		}
-		
-		exifArgs = append(exifArgs, exportedPath)
-		
-		cmd := exec.Command(exiftoolPath, exifArgs...)
-		if err := cmd.Run(); err != nil {
-			// Non-fatal: continue even if metadata embedding fails
-			fmt.Fprintf(os.Stderr, "Warning: failed to embed metadata: %v\n", err)
-		}
-		
-		// Give exiftool time to write
-		time.Sleep(500 * time.Millisecond)
-	}
-	
-	// Create metadata object
-	metadata := &PhotoMetadata{
-		Path:        exportedPath,
-		Title:       title,
-		Alt:         desc, // Use description as alt text
-		Description: desc,
-		Tags:        keywords,
-		Format:      "markdown", // default
-		Private:     false,      // default to public
-		IsTemporary: true,       // Mark this as a temp file that needs cleanup
-	}
-	
-	// Generate thumbnail if possible
-	if a.thumbGen != nil {
-		if result, err := a.thumbGen.Generate(context.Background(), exportedPath, 100); err == nil {
-			metadata.Thumbnail = "data:image/jpeg;base64," + result.ThumbnailData
-			metadata.ImageWidth = result.Info.Width
-			metadata.ImageHeight = result.Info.Height
-			metadata.FileSize = result.Info.FileSize
-		}
-	}
 	
 	// Schedule cleanup after 60 seconds (giving time for upload)
 	go func() {
@@ -393,7 +414,7 @@ func (a *App) getPhotoFromPhotosApp() (*PhotoMetadata, error) {
 		os.RemoveAll(tempDir)
 	}()
 	
-	return metadata, nil
+	return exportedPath, nil
 }
 
 // GetRecentTags returns recently used tags for autocomplete
@@ -409,6 +430,62 @@ func (a *App) GetRecentTags() []string {
 
 // Upload handles the actual upload via imgup CLI
 func (a *App) Upload(metadata PhotoMetadata) (*UploadResult, error) {
+	// If this is from Photos.app and path is still empty, wait a bit or export now
+	if metadata.IsFromPhotos && metadata.Path == "" {
+		// Check if an export is already in progress by waiting briefly
+		time.Sleep(100 * time.Millisecond)
+		
+		// If still no path, do a synchronous export
+		if metadata.Path == "" {
+			exportPath, err := a.exportPhotoFromPhotosApp()
+			if err != nil {
+				return &UploadResult{
+					Success: false,
+					Error:   fmt.Sprintf("Failed to export photo: %s", err.Error()),
+				}, nil
+			}
+			metadata.Path = exportPath
+			metadata.IsTemporary = true
+		}
+		
+		// Re-embed metadata using exiftool if we have any
+		if metadata.Title != "" || metadata.Description != "" || len(metadata.Tags) > 0 {
+			// Find exiftool with full path
+			exiftoolPath := "/usr/local/bin/exiftool"
+			if _, err := os.Stat(exiftoolPath); err != nil {
+				// Try homebrew location
+				exiftoolPath = "/opt/homebrew/bin/exiftool"
+				if _, err := os.Stat(exiftoolPath); err != nil {
+					// Fall back to PATH
+					exiftoolPath = "exiftool"
+				}
+			}
+			
+			exifArgs := []string{"-overwrite_original"}
+			
+			if metadata.Title != "" {
+				exifArgs = append(exifArgs, "-XMP-dc:Title="+metadata.Title)
+			}
+			
+			if metadata.Description != "" {
+				exifArgs = append(exifArgs, "-ImageDescription="+metadata.Description)
+				exifArgs = append(exifArgs, "-XMP-dc:Description="+metadata.Description)
+			}
+			
+			for _, kw := range metadata.Tags {
+				exifArgs = append(exifArgs, "-XMP-dc:Subject+="+strings.TrimSpace(kw))
+			}
+			
+			exifArgs = append(exifArgs, metadata.Path)
+			
+			cmd := exec.Command(exiftoolPath, exifArgs...)
+			if err := cmd.Run(); err != nil {
+				// Non-fatal: continue even if metadata embedding fails
+				fmt.Fprintf(os.Stderr, "Warning: failed to embed metadata: %v\n", err)
+			}
+		}
+	}
+	
 	// Build imgup command
 	args := []string{"upload"}
 	
@@ -636,6 +713,56 @@ func fileExists(path string) bool {
 
 // ForceUpload handles upload with --force flag for duplicates
 func (a *App) ForceUpload(metadata PhotoMetadata) (*UploadResult, error) {
+	// If this is from Photos.app and hasn't been exported yet, export it now
+	if metadata.IsFromPhotos && metadata.Path == "" {
+		exportPath, err := a.exportPhotoFromPhotosApp()
+		if err != nil {
+			return &UploadResult{
+				Success: false,
+				Error:   fmt.Sprintf("Failed to export photo: %s", err.Error()),
+			}, nil
+		}
+		metadata.Path = exportPath
+		metadata.IsTemporary = true
+		
+		// Re-embed metadata using exiftool if we have any
+		if metadata.Title != "" || metadata.Description != "" || len(metadata.Tags) > 0 {
+			// Find exiftool with full path
+			exiftoolPath := "/usr/local/bin/exiftool"
+			if _, err := os.Stat(exiftoolPath); err != nil {
+				// Try homebrew location
+				exiftoolPath = "/opt/homebrew/bin/exiftool"
+				if _, err := os.Stat(exiftoolPath); err != nil {
+					// Fall back to PATH
+					exiftoolPath = "exiftool"
+				}
+			}
+			
+			exifArgs := []string{"-overwrite_original"}
+			
+			if metadata.Title != "" {
+				exifArgs = append(exifArgs, "-XMP-dc:Title="+metadata.Title)
+			}
+			
+			if metadata.Description != "" {
+				exifArgs = append(exifArgs, "-ImageDescription="+metadata.Description)
+				exifArgs = append(exifArgs, "-XMP-dc:Description="+metadata.Description)
+			}
+			
+			for _, kw := range metadata.Tags {
+				exifArgs = append(exifArgs, "-XMP-dc:Subject+="+strings.TrimSpace(kw))
+			}
+			
+			exifArgs = append(exifArgs, metadata.Path)
+			
+			cmd := exec.Command(exiftoolPath, exifArgs...)
+			if err := cmd.Run(); err != nil {
+				// Non-fatal: continue even if metadata embedding fails
+				fmt.Fprintf(os.Stderr, "Warning: failed to embed metadata: %v\n", err)
+			}
+		}
+	}
+	
 	// Build imgup command with --force flag
 	args := []string{"upload", "--force"}
 	
