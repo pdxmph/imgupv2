@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -102,18 +103,57 @@ func (c *Client) UploadMedia(imagePath string, altText string) (string, error) {
 	}
 	defer file.Close()
 	
+	// Read the file contents to detect MIME type
+	fileData, err := io.ReadAll(file)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+	
+	// Detect MIME type from actual file contents
+	mimeType := http.DetectContentType(fileData)
+	
+	// Validate that it's an image type Mastodon accepts
+	validTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/png":  true,
+		"image/gif":  true,
+		"image/webp": true,
+	}
+	
+	if !validTypes[mimeType] {
+		// Fall back to extension-based detection if content detection fails
+		ext := strings.ToLower(filepath.Ext(imagePath))
+		switch ext {
+		case ".png":
+			mimeType = "image/png"
+		case ".gif":
+			mimeType = "image/gif"
+		case ".webp":
+			mimeType = "image/webp"
+		case ".jpg", ".jpeg":
+			mimeType = "image/jpeg"
+		default:
+			return "", fmt.Errorf("unsupported image type: %s", mimeType)
+		}
+	}
+	
 	// Create multipart form
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 	
-	// Add file field
-	part, err := writer.CreateFormFile("file", filepath.Base(imagePath))
+	// Add file field with explicit content type
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filepath.Base(imagePath)))
+	h.Set("Content-Type", mimeType)
+	
+	part, err := writer.CreatePart(h)
 	if err != nil {
-		return "", fmt.Errorf("failed to create form file: %w", err)
+		return "", fmt.Errorf("failed to create form part: %w", err)
 	}
 	
-	if _, err := io.Copy(part, file); err != nil {
-		return "", fmt.Errorf("failed to copy file: %w", err)
+	// Write the file data we already read
+	if _, err := part.Write(fileData); err != nil {
+		return "", fmt.Errorf("failed to write file data: %w", err)
 	}
 	
 	// Add description (alt text) if provided
@@ -168,16 +208,58 @@ func (c *Client) UploadMediaFromURL(imageURL string, altText string) (string, er
 	}
 	defer resp.Body.Close()
 	
-	// Create temp file
-	tempFile, err := os.CreateTemp("", "mastodon-upload-*.jpg")
+	// Read the response body
+	imageData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read image data: %w", err)
+	}
+	
+	// Detect MIME type from actual content
+	detectedType := http.DetectContentType(imageData)
+	
+	// Debug logging
+	fmt.Printf("DEBUG: Downloaded from %s\n", imageURL)
+	fmt.Printf("DEBUG: Content-Type header: %s\n", resp.Header.Get("Content-Type"))
+	fmt.Printf("DEBUG: Detected MIME type: %s\n", detectedType)
+	fmt.Printf("DEBUG: Image size: %d bytes\n", len(imageData))
+	
+	// Check if we got HTML instead of an image
+	if strings.HasPrefix(detectedType, "text/") {
+		preview := string(imageData)
+		if len(preview) > 100 {
+			preview = preview[:100]
+		}
+		fmt.Printf("DEBUG: Got text response instead of image. Content: %s\n", preview)
+		return "", fmt.Errorf("received HTML/text response instead of image from URL: %s", imageURL)
+	}
+	
+	// Determine file extension from URL or Content-Type
+	ext := filepath.Ext(imageURL)
+	if ext == "" {
+		// Try to get from Content-Type header
+		contentType := resp.Header.Get("Content-Type")
+		switch contentType {
+		case "image/png":
+			ext = ".png"
+		case "image/gif":
+			ext = ".gif"
+		case "image/webp":
+			ext = ".webp"
+		default:
+			ext = ".jpg" // default to jpg
+		}
+	}
+	
+	// Create temp file with proper extension
+	tempFile, err := os.CreateTemp("", "mastodon-upload-*"+ext)
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %w", err)
 	}
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
 	
-	// Copy image data
-	_, err = io.Copy(tempFile, resp.Body)
+	// Write image data
+	_, err = tempFile.Write(imageData)
 	if err != nil {
 		return "", fmt.Errorf("failed to save image: %w", err)
 	}

@@ -17,3 +17,5 @@ export function StartThumbnailGeneration(arg1:Array<main.PhotoMetadata>):Promise
 export function TestMultiSelect():Promise<string>;
 
 export function Upload(arg1:main.PhotoMetadata):Promise<main.UploadResult>;
+
+export function UploadMultiplePhotos(arg1:main.MultiPhotoUploadRequest):Promise<main.MultiPhotoUploadResult>;

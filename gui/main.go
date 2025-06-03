@@ -21,9 +21,9 @@ func main() {
 	err := wails.Run(&options.App{
 		Title:     "imgupv2",
 		Width:     900,
-		Height:    650,
+		Height:    500,
 		MinWidth:  800,
-		MinHeight: 600,
+		MinHeight: 450,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

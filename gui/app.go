@@ -60,6 +60,46 @@ type UploadResult struct {
 	SocialPostStatus string `json:"socialPostStatus,omitempty"` // Status of social media posting
 }
 
+// MultiPhotoUploadRequest represents the JSON structure for multi-photo uploads
+type MultiPhotoUploadRequest struct {
+	Post       string                   `json:"post"`
+	Images     []MultiPhotoImageData   `json:"images"`
+	Tags       []string                `json:"tags"`
+	Mastodon   bool                   `json:"mastodon"`
+	Bluesky    bool                   `json:"bluesky"`
+	Visibility string                 `json:"visibility"`
+	Format     string                 `json:"format"`
+}
+
+// MultiPhotoImageData represents a single image in the multi-photo upload
+type MultiPhotoImageData struct {
+	Path         string `json:"path"`
+	Alt          string `json:"alt"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	IsFromPhotos bool   `json:"isFromPhotos"`
+	PhotosIndex  int    `json:"photosIndex"`
+	PhotosID     string `json:"photosId"`
+}
+
+// MultiPhotoUploadResult represents the result of a multi-photo upload
+type MultiPhotoUploadResult struct {
+	Success      bool                      `json:"success"`
+	Outputs      []MultiPhotoOutputResult  `json:"outputs"`
+	Error        string                   `json:"error,omitempty"`
+	SocialStatus string                   `json:"socialStatus,omitempty"`
+}
+
+// MultiPhotoOutputResult represents the result for a single photo
+type MultiPhotoOutputResult struct {
+	Path     string `json:"path"`
+	URL      string `json:"url"`
+	Alt      string `json:"alt"`
+	Markdown string `json:"markdown,omitempty"`
+	HTML     string `json:"html,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
 // NewApp creates a new App application struct
 func NewApp() *App {
 	return &App{
@@ -112,10 +152,11 @@ func (a *App) shutdown(ctx context.Context) {
 
 // ResizeWindow adjusts the window height based on whether Mastodon options are shown
 func (a *App) ResizeWindow(showMastodon bool) {
+	// Maintain horizontal layout, adjust height for social media fields
 	if showMastodon {
-		wailsRuntime.WindowSetSize(a.ctx, 580, 660)
+		wailsRuntime.WindowSetSize(a.ctx, 900, 600)  // Extra height for social fields
 	} else {
-		wailsRuntime.WindowSetSize(a.ctx, 580, 510)
+		wailsRuntime.WindowSetSize(a.ctx, 900, 500)  // Standard height
 	}
 }
 
@@ -446,8 +487,13 @@ func (a *App) getPhotoMetadataFromPhotosApp() (*PhotoMetadata, error) {
 	return metadata, nil
 }
 
-// exportPhotoFromPhotosApp exports the selected photo from Photos.app
+// exportPhotoFromPhotosApp exports the first selected photo from Photos.app
 func (a *App) exportPhotoFromPhotosApp() (string, error) {
+	return a.exportPhotoFromPhotosAppByIndex(1)
+}
+
+// exportPhotoFromPhotosAppByIndex exports a specific photo from Photos.app by index (1-based)
+func (a *App) exportPhotoFromPhotosAppByIndex(photoIndex int) (string, error) {
 	// Create temp directory
 	tempDir, err := os.MkdirTemp("", "imgupv2-photos-*")
 	if err != nil {
@@ -463,13 +509,16 @@ func (a *App) exportPhotoFromPhotosApp() (string, error) {
 		if sel is {} then
 			return "ERROR:No photo selected"
 		end if
-		set photo to item 1 of sel
+		if (count of sel) < %d then
+			return "ERROR:Photo index %d is out of range"
+		end if
+		set photo to item %d of sel
 		
 		-- Export with most recent edits
 		export {photo} to (POSIX file tempFolder)
 		
 		return "OK"
-	end tell`, tempDir)
+	end tell`, tempDir, photoIndex, photoIndex, photoIndex)
 	
 	cmd := exec.Command("osascript", "-e", exportScript)
 	out, err := cmd.CombinedOutput()
@@ -496,13 +545,15 @@ func (a *App) exportPhotoFromPhotosApp() (string, error) {
 	
 	// Get the most recent file
 	exportedPath := filepath.Join(tempDir, files[0].Name())
+	fmt.Printf("DEBUG: Photos exported file: %s\n", exportedPath)
 	
 	// Check if it's a HEIC file and convert to JPEG if needed
 	ext := strings.ToLower(filepath.Ext(exportedPath))
 	if ext == ".heic" || ext == ".heif" {
+		fmt.Printf("DEBUG: Converting HEIC to JPEG: %s\n", exportedPath)
 		// Convert HEIC to JPEG using sips (built into macOS)
 		jpegPath := strings.TrimSuffix(exportedPath, ext) + ".jpg"
-		cmd := exec.Command("sips", "-s", "format", "jpeg", exportedPath, "--out", jpegPath)
+		cmd := exec.Command("sips", "-s", "format", "jpeg", "-s", "formatOptions", "high", exportedPath, "--out", jpegPath)
 		if err := cmd.Run(); err != nil {
 			// Try to continue with HEIC file anyway
 			fmt.Printf("Warning: failed to convert HEIC to JPEG: %v\n", err)
@@ -510,14 +561,16 @@ func (a *App) exportPhotoFromPhotosApp() (string, error) {
 			// Remove original HEIC and use JPEG
 			os.Remove(exportedPath)
 			exportedPath = jpegPath
+			fmt.Printf("DEBUG: Converted to: %s\n", jpegPath)
 		}
 	}
 	
-	// Schedule cleanup after 60 seconds (giving time for upload)
-	go func() {
-		time.Sleep(60 * time.Second)
-		os.RemoveAll(tempDir)
-	}()
+	// Schedule cleanup after 5 minutes (giving plenty of time for upload)
+	go func(dir string) {
+		time.Sleep(5 * time.Minute)
+		os.RemoveAll(dir)
+		fmt.Printf("DEBUG: Cleaned up temp directory: %s\n", dir)
+	}(tempDir)
 	
 	return exportedPath, nil
 }
@@ -1051,6 +1104,46 @@ func (a *App) ForceUpload(metadata PhotoMetadata) (*UploadResult, error) {
 		Duplicate: false, // Force upload always creates new upload
 		ForceAvailable: false,
 	}, nil
+}
+
+
+
+// findImgupBinary locates the imgup binary
+func (a *App) findImgupBinary() string {
+	// Check common locations in order of preference
+	searchPaths := []string{
+		filepath.Join(os.Getenv("HOME"), "go", "bin", "imgup"),
+		filepath.Join("..", "imgup"),
+		"/opt/homebrew/bin/imgup",
+		"/usr/local/bin/imgup",
+		"imgup",
+	}
+	
+	for _, path := range searchPaths {
+		if fileExists(path) {
+			return path
+		}
+	}
+	
+	return "imgup" // Fall back to PATH
+}
+
+// findExiftoolBinary locates the exiftool binary
+func (a *App) findExiftoolBinary() string {
+	// Check common locations in order of preference
+	searchPaths := []string{
+		"/opt/homebrew/bin/exiftool",  // Apple Silicon homebrew
+		"/usr/local/bin/exiftool",      // Intel homebrew
+		"exiftool",                     // Fall back to PATH
+	}
+	
+	for _, path := range searchPaths {
+		if fileExists(path) {
+			return path
+		}
+	}
+	
+	return "exiftool" // Fall back to PATH
 }
 
 // generateThumbnail generates a base64-encoded thumbnail for an image

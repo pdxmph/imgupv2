@@ -33,3 +33,7 @@ export function TestMultiSelect() {
 export function Upload(arg1) {
   return window['go']['main']['App']['Upload'](arg1);
 }
+
+export function UploadMultiplePhotos(arg1) {
+  return window['go']['main']['App']['UploadMultiplePhotos'](arg1);
+}

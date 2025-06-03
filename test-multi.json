@@ -1,0 +1,13 @@
+{
+  "images": [
+    {"path": "/Users/mph/Desktop/IMG_0426.jpeg", "alt": "First photo"},
+    {"path": "/Users/mph/Desktop/DSCF1610.jpeg", "alt": "Second photo"}
+  ],
+  "social": {
+    "mastodon": {
+      "enabled": true,
+      "post": "Multi-image test post",
+      "visibility": "direct"
+    }
+  }
+}

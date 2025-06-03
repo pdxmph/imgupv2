@@ -178,6 +178,11 @@ function setupEventListeners() {
     const mastodonText = document.getElementById('mastodon-text');
     const blueskyText = document.getElementById('bluesky-text');
     
+    // Debug: Track mastodon text changes
+    mastodonText.addEventListener('input', (e) => {
+        console.log('DEBUG: Mastodon text changed to:', e.target.value);
+    });
+    
     // Sync post text between services when both are enabled
     function syncPostText(source) {
         const target = source === mastodonText ? blueskyText : mastodonText;
@@ -706,6 +711,12 @@ async function handleMultiPhotoUpload() {
     
     // Get social media settings from form
     const form = document.getElementById('upload-form');
+    
+    // Debug: Check form state
+    console.log('DEBUG: Form disabled state:', form.classList.contains('disabled'));
+    console.log('DEBUG: Mastodon text element:', document.getElementById('mastodon-text'));
+    console.log('DEBUG: Mastodon text value directly:', document.getElementById('mastodon-text').value);
+    
     const socialPost = {
         mastodonEnabled: form['mastodon-enabled'].checked,
         mastodonText: form['mastodon-text'].value.trim(),
@@ -714,18 +725,77 @@ async function handleMultiPhotoUpload() {
         blueskyText: form['bluesky-text'].value.trim()
     };
     
+    console.log('DEBUG: Social post data:', socialPost);
+    console.log('DEBUG: Mastodon text field value:', form['mastodon-text'].value);
+    
     // Show progress
     showProgress(`Uploading ${window.multiPhotoData.length} photos...`);
     form.classList.add('disabled');
     
     try {
-        // TODO: Call backend multi-photo upload method
-        // For now, just show a placeholder message
-        setTimeout(() => {
+        // Build the JSON structure as specified in the design brief
+        const uploadData = {
+            post: socialPost.mastodonText || socialPost.blueskyText || '',
+            images: window.multiPhotoData.map(photo => ({
+                path: photo.path || '',
+                alt: photo.alt,
+                title: photo.title || '',
+                description: photo.description || '',
+                isFromPhotos: photo.isFromPhotos || false,
+                photosIndex: photo.photosIndex || 0,
+                photosId: photo.photosId || ''
+            })),
+            tags: [], // Collect common tags if needed
+            mastodon: socialPost.mastodonEnabled,
+            bluesky: socialPost.blueskyEnabled,
+            visibility: socialPost.mastodonVisibility || 'public',
+            format: form.format.value || 'url'
+        };
+        
+        console.log('Uploading multiple photos:', uploadData);
+        
+        // Call backend method
+        const result = await window.go.main.App.UploadMultiplePhotos(uploadData);
+        
+        console.log('DEBUG: Upload result:', result);
+        
+        if (result.success) {
             document.getElementById('progress').classList.add('hidden');
-            showSuccess(`Successfully uploaded ${window.multiPhotoData.length} photos!`);
+            
+            // Handle results based on format
+            const outputs = result.outputs || [];
+            let clipboardContent = '';
+            
+            switch (uploadData.format) {
+                case 'markdown':
+                    clipboardContent = outputs.map(o => o.markdown || o.url).join('\n');
+                    break;
+                case 'html':
+                    clipboardContent = outputs.map(o => o.html || `<img src="${o.url}" alt="${o.alt}">`).join('\n');
+                    break;
+                case 'json':
+                    clipboardContent = JSON.stringify(outputs, null, 2);
+                    break;
+                default: // 'url'
+                    clipboardContent = outputs.map(o => o.url).join('\n');
+                    break;
+            }
+            
+            // Copy to clipboard
+            if (clipboardContent) {
+                await navigator.clipboard.writeText(clipboardContent);
+            }
+            
+            let successMessage = `Successfully uploaded ${outputs.length} photos! URLs copied to clipboard.`;
+            if (result.socialStatus) {
+                successMessage += ` ${result.socialStatus}.`;
+            }
+            
+            showSuccess(successMessage);
             setTimeout(() => window.runtime.Quit(), 2000);
-        }, 2000);
+        } else {
+            throw new Error(result.error || 'Upload failed');
+        }
     } catch (err) {
         showError('Multi-photo upload error: ' + err);
         document.getElementById('progress').classList.add('hidden');

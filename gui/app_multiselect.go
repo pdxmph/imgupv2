@@ -278,7 +278,8 @@ func (a *App) startMultiplePhotosExports(photos []PhotoMetadata) {
 			
 			// Skip if we already have a cached thumbnail for this Photos ID
 			if a.cachedPhotoIDs[photo.PhotosID] {
-				fmt.Printf("DEBUG: Using cached thumbnail for photo %d\n", index)
+				fmt.Printf("DEBUG: Using cached thumbnail for photo %d (ID: %s, File: %s)\n", 
+					index, photo.PhotosID, photo.PhotosFilename)
 				
 				// Retrieve the cached thumbnail
 				if a.thumbGen != nil {
@@ -468,6 +469,8 @@ func (a *App) TestMultiSelect() (string, error) {
 
 // StartThumbnailGeneration starts async thumbnail generation for the given photos
 func (a *App) StartThumbnailGeneration(photos []PhotoMetadata) {
+	fmt.Printf("DEBUG: Starting thumbnail generation for %d photos\n", len(photos))
+	
 	// Process based on source
 	var photosFromApp []PhotoMetadata
 	var filesFromFinder []PhotoMetadata
@@ -482,6 +485,16 @@ func (a *App) StartThumbnailGeneration(photos []PhotoMetadata) {
 	
 	// Start appropriate async processing
 	if len(photosFromApp) > 0 {
+		// Count how many are already cached
+		cachedCount := 0
+		for _, photo := range photosFromApp {
+			if a.cachedPhotoIDs[photo.PhotosID] {
+				cachedCount++
+			}
+		}
+		fmt.Printf("DEBUG: Processing %d photos from Photos.app (%d cached, %d new)\n", 
+			len(photosFromApp), cachedCount, len(photosFromApp)-cachedCount)
+		
 		a.startMultiplePhotosExports(photosFromApp)
 	}
 	if len(filesFromFinder) > 0 {

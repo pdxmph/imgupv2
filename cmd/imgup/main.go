@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/pdxmph/imgupv2/pkg/services/bluesky"
 	"github.com/pdxmph/imgupv2/pkg/services/mastodon"
 	"github.com/pdxmph/imgupv2/pkg/templates"
+	"github.com/pdxmph/imgupv2/pkg/types"
 )
 
 var (
@@ -49,6 +51,10 @@ var (
 	// Duplicate detection flags
 	force            bool
 	duplicateInfo    bool  // GUI flag to get duplicate status in JSON
+	
+	// JSON input flags
+	jsonInput        bool
+	jsonFile         string
 )
 
 func main() {
@@ -87,7 +93,7 @@ with support for metadata embedding and multiple output formats.`,
 	uploadCmd := &cobra.Command{
 		Use:   "upload [image]",
 		Short: "Upload an image",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.RangeArgs(0, 1), // 0 for JSON stdin, 1 for single image
 		Run:   uploadCommand,
 	}
 
@@ -110,6 +116,10 @@ with support for metadata embedding and multiple output formats.`,
 	// Add duplicate detection flags
 	uploadCmd.Flags().BoolVar(&duplicateInfo, "duplicate-info", false, "Include duplicate status in JSON output (for GUI)")
 	uploadCmd.Flags().BoolVar(&force, "force", false, "Force upload even if duplicate is found")
+	
+	// Add JSON input flags
+	uploadCmd.Flags().BoolVar(&jsonInput, "json", false, "Read JSON upload specification from stdin")
+	uploadCmd.Flags().StringVar(&jsonFile, "json-file", "", "Read JSON upload specification from file")
 
 	// Check command
 	checkCmd := &cobra.Command{
@@ -463,6 +473,22 @@ func authSmugMug() error {
 }
 
 func uploadCommand(cmd *cobra.Command, args []string) {
+	// Check if JSON mode is requested
+	if jsonInput || jsonFile != "" {
+		if err := handleJSONUpload(cmd); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	
+	// Single image mode - require exactly one argument
+	if len(args) != 1 {
+		fmt.Fprintf(os.Stderr, "Error: Single image upload requires exactly one image path\n")
+		cmd.Usage()
+		os.Exit(1)
+	}
+	
 	imagePath := args[0]
 
 	// Check if file exists
@@ -811,6 +837,442 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "\nTip: Use --alt to provide descriptive alt text for better accessibility.\n")
 		fmt.Fprintf(os.Stderr, "Example: --alt \"Person standing on mountain peak at sunset\"\n")
 	}
+}
+
+func handleJSONUpload(cmd *cobra.Command) error {
+	var input []byte
+	var err error
+	
+	// Read JSON input
+	if jsonInput {
+		// Read from stdin
+		input, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("failed to read from stdin: %w", err)
+		}
+	} else if jsonFile != "" {
+		// Read from file
+		input, err = os.ReadFile(jsonFile)
+		if err != nil {
+			return fmt.Errorf("failed to read file %s: %w", jsonFile, err)
+		}
+	} else {
+		return fmt.Errorf("no JSON input specified")
+	}
+	
+	// Parse JSON
+	var request types.BatchUploadRequest
+	if err := json.Unmarshal(input, &request); err != nil {
+		return fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	
+	// Validate request
+	if len(request.Images) == 0 {
+		return fmt.Errorf("no images specified in JSON")
+	}
+	
+	// Validate all image paths exist
+	for _, img := range request.Images {
+		if _, err := os.Stat(img.Path); os.IsNotExist(err) {
+			return fmt.Errorf("file not found: %s", img.Path)
+		}
+	}
+	
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	
+	// Apply options from JSON
+	if request.Options != nil {
+		if request.Options.Force {
+			force = true
+		}
+		if request.Options.DryRun {
+			dryRun = true
+		}
+	}
+	
+	// Determine service
+	service := determineService(cfg, request.Common)
+	if service == "" {
+		return fmt.Errorf("no upload service configured. Run 'imgup auth flickr' or 'imgup auth smugmug' first")
+	}
+	
+	// Process uploads
+	ctx := context.Background()
+	response := &types.BatchUploadResponse{
+		Success: true,
+		Uploads: make([]types.UploadResult, len(request.Images)),
+	}
+	
+	// Upload images (could be parallelized in future)
+	var uploadedImages []uploadedImage
+	for i, img := range request.Images {
+		result := uploadSingleImage(ctx, cfg, service, img, request.Common)
+		response.Uploads[i] = result
+		
+		if result.Error == nil {
+			uploadedImages = append(uploadedImages, uploadedImage{
+				URL:      result.URL,
+				ImageURL: result.ImageURL,
+				PhotoID:  result.PhotoID,
+				Alt:      img.Alt,
+			})
+		} else {
+			response.Success = false
+		}
+	}
+	
+	// Handle social media posting if at least one image uploaded successfully
+	if len(uploadedImages) > 0 && request.Social != nil && !dryRun {
+		response.Social = &types.SocialPostResults{}
+		
+		// Post to Mastodon
+		if request.Social.Mastodon != nil && request.Social.Mastodon.Enabled {
+			mastodonResult := postToMastodonBatch(cfg, uploadedImages, request.Social.Mastodon)
+			response.Social.Mastodon = &mastodonResult
+		}
+		
+		// Post to Bluesky
+		if request.Social.Bluesky != nil && request.Social.Bluesky.Enabled {
+			blueskyResult := postToBlueskyBatch(cfg, uploadedImages, request.Social.Bluesky)
+			response.Social.Bluesky = &blueskyResult
+		}
+	}
+	
+	// Output JSON response
+	output, err := json.MarshalIndent(response, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal response: %w", err)
+	}
+	fmt.Println(string(output))
+	
+	return nil
+}
+
+// Helper struct for passing uploaded image data
+type uploadedImage struct {
+	URL      string
+	ImageURL string
+	PhotoID  string
+	Alt      string
+}
+
+// determineService figures out which service to use based on config and request
+func determineService(cfg *config.Config, common *types.CommonSettings) string {
+	// Check if service specified in request
+	if common != nil && common.Service != "" {
+		return common.Service
+	}
+	
+	// Use default from config
+	if cfg.Default.Service != "" {
+		return cfg.Default.Service
+	}
+	
+	// Auto-detect based on what's configured
+	hasFlickr := cfg.Flickr.AccessToken != "" && cfg.Flickr.AccessSecret != ""
+	hasSmugMug := cfg.SmugMug.AccessToken != "" && cfg.SmugMug.AccessSecret != ""
+	
+	if hasFlickr && !hasSmugMug {
+		return "flickr"
+	} else if hasSmugMug && !hasFlickr {
+		return "smugmug"
+	}
+	
+	return "" // Both or neither configured
+}
+
+// uploadSingleImage handles uploading a single image and returns the result
+func uploadSingleImage(ctx context.Context, cfg *config.Config, service string, img types.ImageUpload, common *types.CommonSettings) types.UploadResult {
+	result := types.UploadResult{
+		Path: img.Path,
+	}
+	
+	// Merge tags from image and common settings
+	var tags []string
+	if len(img.Tags) > 0 {
+		tags = append(tags, img.Tags...)
+	}
+	if common != nil && len(common.Tags) > 0 {
+		tags = append(tags, common.Tags...)
+	}
+	
+	// Check private setting
+	isPrivate := false
+	if common != nil {
+		isPrivate = common.Private
+	}
+	
+	// Check for duplicates first
+	if !force && cfg.IsDuplicateCheckEnabled() {
+		isDuplicate, existingUpload := checkForDuplicate(ctx, cfg, service, img.Path)
+		if isDuplicate && existingUpload != nil {
+			result.Duplicate = true
+			result.URL = existingUpload.RemoteURL
+			result.ImageURL = existingUpload.ImageURL
+			result.PhotoID = existingUpload.RemoteID
+			return result
+		}
+	}
+	
+	// Get file info for machine tags
+	fileInfo, _ := duplicate.GetFileInfo(img.Path)
+	
+	// Perform upload based on service
+	switch service {
+	case "flickr":
+		// Add machine tag for duplicate detection
+		if fileInfo != nil && fileInfo.MD5 != "" {
+			machineTag := fmt.Sprintf("imgupv2:checksum=%s", fileInfo.MD5)
+			tags = append(tags, machineTag)
+		}
+		
+		uploader := backends.NewFlickrUploader(
+			cfg.Flickr.ConsumerKey,
+			cfg.Flickr.ConsumerSecret,
+			cfg.Flickr.AccessToken,
+			cfg.Flickr.AccessSecret,
+		)
+		
+		uploadResult, err := uploader.Upload(ctx, img.Path, img.Title, img.Description, tags, isPrivate)
+		if err != nil {
+			errStr := err.Error()
+			result.Error = &errStr
+			return result
+		}
+		
+		result.URL = uploadResult.URL
+		result.ImageURL = uploadResult.ImageURL
+		result.PhotoID = uploadResult.PhotoID
+		
+	case "smugmug":
+		uploader := backends.NewSmugMugUploader(
+			cfg.SmugMug.ConsumerKey,
+			cfg.SmugMug.ConsumerSecret,
+			cfg.SmugMug.AccessToken,
+			cfg.SmugMug.AccessSecret,
+			cfg.SmugMug.AlbumID,
+		)
+		
+		uploadResult, err := uploader.Upload(ctx, img.Path, img.Title, img.Description, tags, isPrivate)
+		if err != nil {
+			errStr := err.Error()
+			result.Error = &errStr
+			return result
+		}
+		
+		result.URL = uploadResult.URL
+		result.ImageURL = uploadResult.ImageURL
+		result.PhotoID = uploadResult.ImageKey
+		
+	default:
+		errStr := fmt.Sprintf("unsupported service: %s", service)
+		result.Error = &errStr
+		return result
+	}
+	
+	// Record successful upload in cache
+	if fileInfo != nil && result.Error == nil {
+		recordUploadInCache(service, img.Path, result.PhotoID, result.URL, result.ImageURL, fileInfo)
+	}
+	
+	return result
+}
+
+// checkForDuplicate checks if an image has already been uploaded
+func checkForDuplicate(ctx context.Context, cfg *config.Config, service string, imagePath string) (bool, *duplicate.Upload) {
+	var checker *duplicate.RemoteChecker
+	var err error
+	
+	switch service {
+	case "flickr":
+		checker, err = duplicate.SetupFlickrDuplicateChecker(&cfg.Flickr)
+	case "smugmug":
+		checker, err = duplicate.SetupSmugMugDuplicateChecker(&cfg.SmugMug)
+	default:
+		return false, nil
+	}
+	
+	if err != nil {
+		return false, nil
+	}
+	defer checker.Close()
+	
+	existingUpload, err := checker.Check(ctx, imagePath)
+	if err != nil || existingUpload == nil {
+		return false, nil
+	}
+	
+	return true, existingUpload
+}
+
+// recordUploadInCache records a successful upload for future duplicate detection
+func recordUploadInCache(service, imagePath, photoID, photoURL, imageURL string, fileInfo *duplicate.FileInfo) {
+	cache, err := duplicate.NewSQLiteCache(duplicate.DefaultCachePath())
+	if err != nil {
+		return
+	}
+	defer cache.Close()
+	
+	upload := &duplicate.Upload{
+		FileMD5:    fileInfo.MD5,
+		Service:    service,
+		RemoteID:   photoID,
+		RemoteURL:  photoURL,
+		ImageURL:   imageURL,
+		UploadTime: time.Now(),
+		Filename:   filepath.Base(imagePath),
+		FileSize:   fileInfo.Size,
+	}
+	
+	cache.Record(upload)
+}
+
+// postToMastodonBatch posts multiple images to Mastodon
+func postToMastodonBatch(cfg *config.Config, images []uploadedImage, settings *types.MastodonSettings) types.SocialPostResult {
+	result := types.SocialPostResult{}
+	
+	// Check if Mastodon is configured
+	if cfg.Mastodon.AccessToken == "" {
+		errStr := "not authenticated with Mastodon"
+		result.Error = &errStr
+		return result
+	}
+	
+	// Create Mastodon client
+	client := mastodon.NewClient(
+		cfg.Mastodon.InstanceURL,
+		cfg.Mastodon.ClientID,
+		cfg.Mastodon.ClientSecret,
+		cfg.Mastodon.AccessToken,
+	)
+	
+	// Upload all images to Mastodon and collect media IDs
+	var mediaIDs []string
+	for _, img := range images {
+		// Get image URL for social posting
+		imageURL := img.ImageURL
+		if imageURL == "" {
+			// Fall back to fetching it based on service
+			// This would need the service info, but for now use what we have
+			continue
+		}
+		
+		mediaID, err := client.UploadMediaFromURL(imageURL, img.Alt)
+		if err != nil {
+			errStr := fmt.Sprintf("failed to upload media: %v", err)
+			result.Error = &errStr
+			return result
+		}
+		mediaIDs = append(mediaIDs, mediaID)
+	}
+	
+	// Build status text
+	statusText := settings.Post
+	if statusText == "" {
+		statusText = "Photos uploaded with imgupv2"
+	}
+	
+	// Add URLs of all photos
+	statusText += "\n\n"
+	for i, img := range images {
+		if i > 0 {
+			statusText += "\n"
+		}
+		statusText += img.URL
+	}
+	
+	// Post the status with all media
+	visibility := settings.Visibility
+	if visibility == "" {
+		visibility = "public"
+	}
+	
+	if err := client.PostStatus(statusText, mediaIDs, visibility, nil); err != nil {
+		errStr := fmt.Sprintf("failed to post status: %v", err)
+		result.Error = &errStr
+		return result
+	}
+	
+	result.Success = true
+	// TODO: Get the actual Mastodon post URL from the response
+	result.URL = cfg.Mastodon.InstanceURL // Placeholder
+	
+	return result
+}
+
+// postToBlueskyBatch posts multiple images to Bluesky
+func postToBlueskyBatch(cfg *config.Config, images []uploadedImage, settings *types.BlueskySettings) types.SocialPostResult {
+	result := types.SocialPostResult{}
+	
+	// Check if Bluesky is configured
+	if cfg.Bluesky.Handle == "" || cfg.Bluesky.AppPassword == "" {
+		errStr := "not authenticated with Bluesky"
+		result.Error = &errStr
+		return result
+	}
+	
+	// Create Bluesky client
+	client := bluesky.NewClient(cfg.Bluesky.PDS, cfg.Bluesky.Handle, cfg.Bluesky.AppPassword)
+	
+	// Upload all images to Bluesky and collect blobs
+	var blobs []bluesky.BlobResponse
+	var altTexts []string
+	
+	for _, img := range images {
+		imageURL := img.ImageURL
+		if imageURL == "" {
+			continue
+		}
+		
+		blob, _, err := client.UploadMediaFromURL(imageURL, img.Alt)
+		if err != nil {
+			errStr := fmt.Sprintf("failed to upload media: %v", err)
+			result.Error = &errStr
+			return result
+		}
+		
+		if blob != nil {
+			blobs = append(blobs, *blob)
+			altTexts = append(altTexts, img.Alt)
+		}
+	}
+	
+	// Build status text
+	statusText := settings.Post
+	if statusText == "" {
+		statusText = "Photos uploaded with imgupv2"
+	}
+	
+	// Add URLs
+	statusText += "\n\n"
+	for i, img := range images {
+		if i > 0 {
+			statusText += "\n"
+		}
+		statusText += img.URL
+	}
+	
+	// Check character limit
+	if len(statusText) > 300 {
+		statusText = statusText[:297] + "..."
+	}
+	
+	// Post the status with all media
+	if err := client.PostStatus(statusText, blobs, altTexts, nil); err != nil {
+		errStr := fmt.Sprintf("failed to post status: %v", err)
+		result.Error = &errStr
+		return result
+	}
+	
+	result.Success = true
+	// TODO: Get actual Bluesky post URL
+	result.URL = "https://bsky.app/" // Placeholder
+	
+	return result
 }
 
 func configShowCommand(cmd *cobra.Command, args []string) {

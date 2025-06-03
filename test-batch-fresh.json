@@ -1,0 +1,24 @@
+{
+  "images": [
+    {
+      "path": "tests/fixtures/test_metadata.jpeg",
+      "title": "Fresh upload test 1",
+      "tags": ["testbatch1", "unique1"]
+    },
+    {
+      "path": "tests/fixtures/test_metadata.jpeg",
+      "title": "Fresh upload test 2",
+      "tags": ["testbatch2", "unique2"]
+    }
+  ],
+  "options": {
+    "force": true
+  },
+  "social": {
+    "mastodon": {
+      "enabled": true,
+      "post": "Testing fresh batch upload - force flag",
+      "visibility": "direct"
+    }
+  }
+}
