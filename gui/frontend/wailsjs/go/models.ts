@@ -20,6 +20,8 @@ export namespace main {
 	    isTemporary: boolean;
 	    isFromPhotos: boolean;
 	    photosIndex: number;
+	    photosId: string;
+	    photosFilename: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PhotoMetadata(source);
@@ -46,6 +48,8 @@ export namespace main {
 	        this.isTemporary = source["isTemporary"];
 	        this.isFromPhotos = source["isFromPhotos"];
 	        this.photosIndex = source["photosIndex"];
+	        this.photosId = source["photosId"];
+	        this.photosFilename = source["photosFilename"];
 	    }
 	}
 	export class UploadResult {

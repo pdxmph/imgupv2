@@ -1,10 +1,20 @@
+// imgupv2 GUI main.js
+console.log('main.js loaded');
+
 // Store current photo metadata globally
 let currentPhotoMetadata = null;
+let currentPhotosArray = null; // For multi-selection
+
+// Track event listeners for cleanup
+let thumbnailEventOff = null;
+let metadataEventOff = null;
 
 // Initialize on DOM ready
 document.addEventListener('DOMContentLoaded', async () => {
-    // Initial load
-    await loadSelectedPhoto();
+    console.log('DOM loaded, initializing app...');
+    
+    // Set up event listeners FIRST before any backend calls
+    setupEventListeners();
     
     // Set up tag autocomplete
     setupTagAutocomplete();
@@ -17,34 +27,65 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.runtime.Quit();
     };
     
+    // Clean up on window close
+    window.addEventListener('beforeunload', () => {
+        cleanupMultiPhotoListeners();
+    });
+    
+    // NOW load the selected photo (after event listeners are ready)
+    await loadSelectedPhoto();
+});
+
+// Set up all event listeners
+function setupEventListeners() {
+    console.log('Setting up event listeners...');
+    
     // Listen for async thumbnail updates
     window.runtime.EventsOn('thumbnail-ready', (data) => {
-        // Only update if it's for the current photo
-        if (currentPhotoMetadata && data.path === currentPhotoMetadata.path) {
-            const preview = document.getElementById('preview');
-            const container = document.getElementById('preview-container');
-            const dimensions = document.getElementById('dimensions');
-            
-            // Update thumbnail
-            preview.src = data.thumbnail;
-            
-            // Update dimensions and file size
-            if (data.width && data.height) {
-                const sizeText = formatFileSize(data.fileSize);
-                dimensions.textContent = `${data.width}×${data.height} • ${sizeText}`;
+        console.log('Thumbnail ready event:', data);
+        
+        // For single photo mode
+        if (currentPhotoMetadata && !window.multiPhotoData) {
+            // Check if this is for the current photo
+            // For Photos.app selections, path might be empty initially
+            if ((data.path && data.path === currentPhotoMetadata.path) || 
+                (currentPhotoMetadata.isFromPhotos && data.index === 0)) {
+                const preview = document.getElementById('preview');
+                const container = document.getElementById('preview-container');
+                const dimensions = document.getElementById('dimensions');
+                
+                // Update thumbnail
+                if (data.thumbnail) {
+                    preview.src = data.thumbnail;
+                    preview.style.display = 'block';
+                }
+                
+                // Update dimensions and file size if available
+                if (data.width && data.height) {
+                    const sizeText = formatFileSize(data.fileSize);
+                    dimensions.textContent = `${data.width}×${data.height} • ${sizeText}`;
+                } else if (data.path) {
+                    // Just show filename for now
+                    const filename = document.getElementById('filename');
+                    const name = data.path.split('/').pop();
+                    filename.textContent = name;
+                    dimensions.textContent = '';
+                }
+                
+                // Show container if it was hidden
+                container.classList.remove('hidden');
             }
-            
-            // Show container if it was hidden
-            container.classList.remove('hidden');
         }
     });
     
     // Listen for Photos export completion
     window.runtime.EventsOn('photos-export-ready', (data) => {
         if (currentPhotoMetadata && currentPhotoMetadata.isFromPhotos) {
-            // Update the metadata with the exported path
-            currentPhotoMetadata.path = data.path;
-            currentPhotoMetadata.isTemporary = true;
+            // Update the metadata with the exported path (if provided)
+            if (data.path) {
+                currentPhotoMetadata.path = data.path;
+                currentPhotoMetadata.isTemporary = true;
+            }
             
             // Update the preview
             const preview = document.getElementById('preview');
@@ -55,12 +96,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             preview.style.display = 'block';
             
             // Update filename to show it's ready
-            filename.textContent = 'Photos Export Ready';
+            filename.textContent = data.cached ? 'Photos (Cached)' : 'Photos Export Ready';
             
             if (data.width && data.height) {
                 const sizeText = formatFileSize(data.fileSize);
                 dimensions.textContent = `${data.width}×${data.height} • ${sizeText}`;
             }
+        }
+    });
+    
+    // Listen for Photos path ready (when using cached thumbnail)
+    window.runtime.EventsOn('photos-path-ready', (data) => {
+        if (currentPhotoMetadata && currentPhotoMetadata.isFromPhotos && data.path) {
+            currentPhotoMetadata.path = data.path;
+            currentPhotoMetadata.isTemporary = true;
         }
     });
     
@@ -73,6 +122,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (data.alt && !document.getElementById('alt').value) {
             document.getElementById('alt').value = data.alt;
         }
+        if (data.description && !document.getElementById('description').value) {
+            document.getElementById('description').value = data.description;
+        }
         if (data.tags && data.tags.length > 0 && !document.getElementById('tags').value) {
             document.getElementById('tags').value = data.tags.join(' ');
         }
@@ -82,6 +134,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             window.runtime.Quit();
+        }
+        
+        // Multi-photo keyboard navigation
+        if (window.multiPhotoData) {
+            const photoCount = window.multiPhotoData.length;
+            
+            if (e.key === 'Tab' && !e.shiftKey) {
+                // Tab to next photo
+                e.preventDefault();
+                const nextIndex = (window.currentPhotoIndex + 1) % photoCount;
+                selectPhoto(nextIndex);
+            } else if (e.key === 'Tab' && e.shiftKey) {
+                // Shift+Tab to previous photo
+                e.preventDefault();
+                const prevIndex = (window.currentPhotoIndex - 1 + photoCount) % photoCount;
+                selectPhoto(prevIndex);
+            } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                // Arrow keys for navigation
+                e.preventDefault();
+                const delta = e.key === 'ArrowDown' ? 1 : -1;
+                const newIndex = Math.max(0, Math.min(photoCount - 1, window.currentPhotoIndex + delta));
+                if (newIndex !== window.currentPhotoIndex) {
+                    selectPhoto(newIndex);
+                }
+            }
         }
     });
     
@@ -173,7 +250,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
     });
-});
+    
+    console.log('Event listeners setup complete');
+}
 
 // Add this function to watch for metadata population
 function watchForMetadata() {
@@ -243,6 +322,8 @@ function watchForMetadata() {
 
 // Extract photo loading logic into a separate function
 async function loadSelectedPhoto() {
+    const overlay = document.getElementById('loading-overlay');
+    
     try {
         // Clear any previous errors
         document.getElementById('error-message').classList.add('hidden');
@@ -251,22 +332,34 @@ async function loadSelectedPhoto() {
         // Show the form
         document.getElementById('upload-form').classList.remove('hidden');
         
-        // Load selected photo metadata
-        const metadata = await window.go.main.App.GetSelectedPhoto();
-        if (metadata && (metadata.path || metadata.isFromPhotos)) {
-            currentPhotoMetadata = metadata;
-            populateForm(metadata);
+        // Load selected photos (multiple)
+        console.log('Calling GetSelectedPhotos...');
+        const photos = await window.go.main.App.GetSelectedPhotos();
+        console.log('GetSelectedPhotos returned:', photos);
+        
+        if (photos && photos.length > 0) {
+            currentPhotosArray = photos;
             
-            // NOW watch for metadata (after we know what type of selection it is)
-            watchForMetadata();
-            
-            // Show a note if this is from Photos
-            if (metadata.isFromPhotos) {
-                showToast('Photo selected from Photos.app');
+            if (photos.length === 1) {
+                // Single photo - use existing UI
+                currentPhotoMetadata = photos[0];
+                populateForm(photos[0]);
+                
+                // NOW watch for metadata (after we know what type of selection it is)
+                watchForMetadata();
+                
+                // Show a note if this is from Photos
+                if (photos[0].isFromPhotos) {
+                    showToast('Photo selected from Photos.app');
+                }
+                
+                // Focus on first editable field
+                document.getElementById('title').focus();
+            } else {
+                // Multiple photos - switch to list view
+                console.log(`Multiple photos selected: ${photos.length}`);
+                showMultiPhotoUI(photos);
             }
-            
-            // Focus on first editable field
-            document.getElementById('title').focus();
         } else {
             // Hide overlay on error
             const overlay = document.getElementById('loading-overlay');
@@ -283,10 +376,24 @@ async function loadSelectedPhoto() {
         console.error('Failed to get selection:', err);
         showError('Failed to get selected photo: ' + err);
         // Don't hide the form - let the error overlay show instead
+    } finally {
+        // Always hide loading overlay after 2 seconds as a failsafe
+        setTimeout(() => {
+            const overlay = document.getElementById('loading-overlay');
+            if (overlay && !overlay.classList.contains('hidden')) {
+                overlay.classList.add('hidden');
+                console.error('Loading overlay timeout - forcing hide');
+            }
+        }, 2000);
     }
 }
 
 function populateForm(metadata) {
+    // Show single photo preview, hide multi-photo list
+    document.getElementById('preview-container').classList.remove('hidden');
+    document.getElementById('multi-photo-list').classList.add('hidden');
+    
+    // Update form fields
     document.getElementById('title').value = metadata.title || '';
     document.getElementById('alt').value = metadata.alt || '';
     document.getElementById('description').value = metadata.description || '';
@@ -296,6 +403,31 @@ function populateForm(metadata) {
     
     // Always call loadPreview to handle all cases (thumbnail, loading, Photos)
     loadPreview(metadata);
+    
+    // For Photos.app selections without a thumbnail, trigger thumbnail generation
+    if (metadata.isFromPhotos && !metadata.thumbnail) {
+        console.log('Photos selection missing thumbnail, triggering generation');
+        // Small delay to ensure event listeners are fully ready
+        setTimeout(() => {
+            window.go.main.App.StartThumbnailGeneration([metadata]).then(() => {
+                console.log('Thumbnail generation started');
+            }).catch(err => {
+                console.error('Failed to start thumbnail generation:', err);
+            });
+        }, 100);
+    }
+    
+    // For Finder selections, also trigger thumbnail and metadata generation
+    if (!metadata.isFromPhotos && metadata.path) {
+        console.log('Finder selection, triggering thumbnail and metadata generation');
+        setTimeout(() => {
+            window.go.main.App.StartThumbnailGeneration([metadata]).then(() => {
+                console.log('Thumbnail/metadata generation started for Finder file');
+            }).catch(err => {
+                console.error('Failed to start thumbnail/metadata generation:', err);
+            });
+        }, 100);
+    }
 }
 
 function loadPreview(metadata) {
@@ -305,12 +437,17 @@ function loadPreview(metadata) {
     const dimensions = document.getElementById('dimensions');
     
     if (metadata.thumbnail) {
-        // Use the base64 thumbnail from metadata
+        // Use the base64 thumbnail from metadata (cached Photos.app thumbnail)
         preview.src = metadata.thumbnail;
+        preview.style.display = 'block';
         
         // Display filename
-        const name = metadata.path.split('/').pop();
-        filename.textContent = name;
+        if (metadata.photosFilename) {
+            filename.textContent = metadata.photosFilename;
+        } else if (metadata.path) {
+            const name = metadata.path.split('/').pop();
+            filename.textContent = name;
+        }
         
         // Display dimensions and file size
         if (metadata.imageWidth && metadata.imageHeight) {
@@ -333,10 +470,15 @@ function loadPreview(metadata) {
         
         // The thumbnail will arrive via the 'thumbnail-ready' event
     } else if (metadata.isFromPhotos) {
-        // Photos selection - show spinner while export happens
-        preview.style.display = 'none';
-        filename.textContent = 'Photos Selection';
-        dimensions.innerHTML = '<div class="mini-spinner"></div> <span style="color: #666;">Exporting from Photos...</span>';
+        // Photos selection - show spinner while export happens (unless we have cached thumbnail)
+        if (!metadata.thumbnail) {
+            preview.style.display = 'none';
+            filename.textContent = 'Photos Selection';
+            dimensions.innerHTML = '<div class="mini-spinner"></div> <span style="color: #666;">Exporting from Photos...</span>';
+        } else {
+            // We have a cached thumbnail, it was already displayed above
+            filename.textContent = metadata.photosFilename || 'Photos Selection';
+        }
         container.classList.remove('hidden');
     }
     
@@ -429,6 +571,12 @@ async function setupTagAutocomplete() {
 async function handleUpload(e) {
     e.preventDefault();
     
+    // Check if we're in multi-photo mode
+    if (window.multiPhotoData) {
+        return handleMultiPhotoUpload();
+    }
+    
+    // Single photo upload
     const form = e.target;
     const metadata = {
         path: currentPhotoMetadata.path,
@@ -536,6 +684,50 @@ async function handleUpload(e) {
         }
     } catch (err) {
         showError('Upload error: ' + err);
+        document.getElementById('progress').classList.add('hidden');
+        form.classList.remove('disabled');
+    }
+}
+
+// Handle multi-photo upload
+async function handleMultiPhotoUpload() {
+    // Save current photo data
+    saveCurrentPhotoData();
+    
+    // Validate all photos have alt text
+    const missingAlt = window.multiPhotoData.filter(p => !p.alt);
+    if (missingAlt.length > 0) {
+        const firstMissing = missingAlt[0];
+        selectPhoto(firstMissing.index);
+        document.getElementById('alt').focus();
+        showError(`Please provide alt text for all photos (${missingAlt.length} missing)`);
+        return;
+    }
+    
+    // Get social media settings from form
+    const form = document.getElementById('upload-form');
+    const socialPost = {
+        mastodonEnabled: form['mastodon-enabled'].checked,
+        mastodonText: form['mastodon-text'].value.trim(),
+        mastodonVisibility: form['mastodon-visibility'].value,
+        blueskyEnabled: form['bluesky-enabled'].checked,
+        blueskyText: form['bluesky-text'].value.trim()
+    };
+    
+    // Show progress
+    showProgress(`Uploading ${window.multiPhotoData.length} photos...`);
+    form.classList.add('disabled');
+    
+    try {
+        // TODO: Call backend multi-photo upload method
+        // For now, just show a placeholder message
+        setTimeout(() => {
+            document.getElementById('progress').classList.add('hidden');
+            showSuccess(`Successfully uploaded ${window.multiPhotoData.length} photos!`);
+            setTimeout(() => window.runtime.Quit(), 2000);
+        }, 2000);
+    } catch (err) {
+        showError('Multi-photo upload error: ' + err);
         document.getElementById('progress').classList.add('hidden');
         form.classList.remove('disabled');
     }
@@ -676,5 +868,212 @@ async function handleForceUpload(metadata) {
         showError('Re-upload error: ' + err);
         document.getElementById('progress').classList.add('hidden');
         form.classList.remove('disabled');
+    }
+}
+
+
+// Show UI for multiple photo selection
+function showMultiPhotoUI(photos) {
+    // Store photos for later use, preserving existing metadata
+    window.multiPhotoData = photos.map((photo, index) => ({
+        ...photo,
+        index,
+        alt: photo.alt || '',  // Preserve existing alt text
+        description: photo.description || '',  // Preserve existing description
+        hasAltText: !!photo.alt  // Set based on whether alt already exists
+    }));
+    window.currentPhotoIndex = 0;
+    
+    // Hide single photo preview, show multi-photo list
+    document.getElementById('preview-container').classList.add('hidden');
+    document.getElementById('multi-photo-list').classList.remove('hidden');
+    
+    // Update photo count
+    document.getElementById('photo-count').textContent = photos.length;
+    
+    // Build photo list
+    const listContainer = document.getElementById('photo-list-container');
+    listContainer.innerHTML = photos.map((photo, index) => {
+        const hasAlt = !!photo.alt;
+        return `
+        <div class="photo-item ${index === 0 ? 'selected' : ''}" data-index="${index}">
+            <div class="thumbnail">
+                <div class="thumbnail-placeholder">
+                    <span class="loading-spinner"></span>
+                </div>
+            </div>
+            <div class="photo-details">
+                <div class="photo-name">${photo.photosFilename || photo.path.split('/').pop()}</div>
+                <div class="photo-source">${photo.isFromPhotos ? 'Photos.app' : 'Finder'}</div>
+            </div>
+            <div class="alt-check ${hasAlt ? 'filled' : 'empty'}" title="${hasAlt ? 'Alt text provided' : 'Alt text not provided'}">${hasAlt ? '✓' : '○'}</div>
+        </div>
+    `}).join('');
+    
+    // Add click handlers for photo selection
+    listContainer.querySelectorAll('.photo-item').forEach(item => {
+        item.addEventListener('click', () => selectPhoto(parseInt(item.dataset.index)));
+    });
+    
+    // Update upload button
+    const uploadBtn = document.getElementById('upload-btn');
+    uploadBtn.textContent = `Upload ${photos.length} Photos`;
+    
+    // Load first photo's details
+    loadPhotoDetails(0);
+    
+    // Hide loading overlay
+    document.getElementById('loading-overlay').classList.add('hidden');
+    
+    // Start loading thumbnails
+    loadThumbnailsAsync(photos);
+}
+
+// Select a photo from the list
+function selectPhoto(index) {
+    // Save current photo data before switching
+    saveCurrentPhotoData();
+    
+    // Update selection
+    document.querySelectorAll('.photo-item').forEach(item => {
+        item.classList.toggle('selected', parseInt(item.dataset.index) === index);
+    });
+    
+    // Load new photo details
+    window.currentPhotoIndex = index;
+    loadPhotoDetails(index);
+}
+
+// Load details for a specific photo
+function loadPhotoDetails(index) {
+    const photo = window.multiPhotoData[index];
+    
+    // Update form fields
+    document.getElementById('title').value = photo.title || '';
+    document.getElementById('alt').value = photo.alt || '';
+    document.getElementById('description').value = photo.description || '';
+    document.getElementById('tags').value = (photo.tags || []).join(' ');
+    
+    // Focus on alt text if empty
+    if (!photo.alt) {
+        document.getElementById('alt').focus();
+    }
+}
+
+// Save current photo data
+function saveCurrentPhotoData() {
+    if (window.multiPhotoData && window.currentPhotoIndex !== undefined) {
+        const current = window.multiPhotoData[window.currentPhotoIndex];
+        current.title = document.getElementById('title').value;
+        current.alt = document.getElementById('alt').value;
+        current.description = document.getElementById('description').value;
+        current.tags = document.getElementById('tags').value.split(' ').filter(t => t);
+        current.hasAltText = !!current.alt;
+        
+        // Update checkmark
+        const photoItem = document.querySelector(`.photo-item[data-index="${window.currentPhotoIndex}"]`);
+        if (photoItem) {
+            const altCheck = photoItem.querySelector('.alt-check');
+            if (altCheck) {
+                if (current.hasAltText) {
+                    altCheck.classList.remove('empty');
+                    altCheck.classList.add('filled');
+                    altCheck.textContent = '✓';
+                    altCheck.title = 'Alt text provided';
+                } else {
+                    altCheck.classList.remove('filled');
+                    altCheck.classList.add('empty');
+                    altCheck.textContent = '○';
+                    altCheck.title = 'Alt text not provided';
+                }
+            }
+        }
+    }
+}
+
+// Load thumbnails asynchronously
+function loadThumbnailsAsync(photos) {
+    // Clean up any existing listeners
+    cleanupMultiPhotoListeners();
+    
+    // Listen for thumbnail-ready events
+    thumbnailEventOff = runtime.EventsOn('thumbnail-ready', (data) => {
+        console.log('Thumbnail ready for index:', data.index);
+        
+        const photoItem = document.querySelector(`.photo-item[data-index="${data.index}"]`);
+        if (!photoItem) {
+            console.error('Photo item not found for index:', data.index);
+            return;
+        }
+        
+        if (data.error) {
+            console.error('Thumbnail error:', data.error);
+            const thumbnailDiv = photoItem.querySelector('.thumbnail');
+            if (thumbnailDiv) {
+                thumbnailDiv.innerHTML = `<div class="thumbnail-error">Failed</div>`;
+            }
+            return;
+        }
+        
+        if (data.thumbnail) {
+            const thumbnailDiv = photoItem.querySelector('.thumbnail');
+            if (thumbnailDiv) {
+                thumbnailDiv.innerHTML = `<img src="${data.thumbnail}" alt="Thumbnail">`;
+            }
+        }
+    });
+    
+    // Listen for metadata updates
+    metadataEventOff = runtime.EventsOn('metadata-ready', (data) => {
+        console.log('Metadata ready for index:', data.index);
+        
+        // Update stored photo data
+        if (window.multiPhotoData && window.multiPhotoData[data.index]) {
+            const photo = window.multiPhotoData[data.index];
+            if (data.alt && !photo.alt) photo.alt = data.alt;
+            if (data.title && !photo.title) photo.title = data.title;
+            if (data.description && !photo.description) photo.description = data.description;  // Add description
+            if (data.keywords && !photo.tags) photo.tags = data.keywords;
+            
+            // Update hasAltText flag
+            photo.hasAltText = !!photo.alt;
+            
+            // Update the checkmark in the UI
+            const photoItem = document.querySelector(`.photo-item[data-index="${data.index}"]`);
+            if (photoItem && photo.hasAltText) {
+                const altCheck = photoItem.querySelector('.alt-check');
+                if (altCheck) {
+                    altCheck.classList.remove('empty');
+                    altCheck.classList.add('filled');
+                    altCheck.textContent = '✓';
+                    altCheck.title = 'Alt text provided';
+                }
+            }
+            
+            // If this is the currently selected photo, update the form
+            if (data.index === window.currentPhotoIndex) {
+                loadPhotoDetails(data.index);
+            }
+        }
+    });
+    
+    // Now that listeners are set up, start the thumbnail generation
+    console.log('Starting thumbnail generation for', photos.length, 'photos');
+    window.go.main.App.StartThumbnailGeneration(photos).then(() => {
+        console.log('Thumbnail generation started');
+    }).catch(err => {
+        console.error('Failed to start thumbnail generation:', err);
+    });
+}
+
+// Clean up multi-photo event listeners
+function cleanupMultiPhotoListeners() {
+    if (thumbnailEventOff) {
+        thumbnailEventOff();
+        thumbnailEventOff = null;
+    }
+    if (metadataEventOff) {
+        metadataEventOff();
+        metadataEventOff = null;
     }
 }

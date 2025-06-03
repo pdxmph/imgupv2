@@ -15,107 +15,130 @@
             </div>
         </div>
         
-        <form id="upload-form">
-            <div id="preview-container" class="hidden">
-                <div class="preview-content">
-                    <img id="preview" src="" alt="Preview">
-                    <div class="preview-info">
-                        <div id="filename" class="filename"></div>
-                        <div id="dimensions" class="dimensions"></div>
+        <div class="main-container">
+            <!-- Left Panel - Changes based on mode -->
+            <div id="left-panel" class="panel">
+                <!-- Single photo preview (hidden by default) -->
+                <div id="preview-container" class="hidden">
+                    <div class="preview-content">
+                        <img id="preview" src="" alt="Preview">
+                        <div class="preview-info">
+                            <div id="filename" class="filename"></div>
+                            <div id="dimensions" class="dimensions"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Multi-photo list (hidden by default) -->
+                <div id="multi-photo-list" class="hidden">
+                    <h3>Selected Photos (<span id="photo-count">0</span>)</h3>
+                    <div id="photo-list-container">
+                        <!-- Photo items will be inserted here -->
                     </div>
                 </div>
             </div>
             
-            <div class="field">
-                <label for="title">Title</label>
-                <input type="text" id="title" name="title" autofocus>
+            <!-- Right Panel - Form fields -->
+            <div id="right-panel" class="panel">
+                <form id="upload-form">
+                    <!-- Photo metadata fields -->
+                    <div id="metadata-section">
+                        <div class="field">
+                            <label for="title">Title</label>
+                            <input type="text" id="title" name="title" autofocus>
+                        </div>
+                        
+                        <div class="field">
+                            <label for="alt">Alt Text <span class="required">*</span></label>
+                            <textarea id="alt" name="alt" rows="2" placeholder="Alt text for accessibility" required></textarea>
+                        </div>
+                        
+                        <div class="field">
+                            <label for="description">Description</label>
+                            <textarea id="description" name="description" rows="3" placeholder="Photo description"></textarea>
+                        </div>
+                        
+                        <div class="field">
+                            <label for="tags">Tags</label>
+                            <input type="text" id="tags" name="tags" 
+                                   placeholder="space-separated tags">
+                            <div id="tag-suggestions" class="suggestions hidden"></div>
+                        </div>
+                        
+                        <div class="options">
+                            <div class="field-inline">
+                                <label>Format:</label>
+                                <select id="format">
+                                    <option value="markdown">Markdown</option>
+                                    <option value="html">HTML</option>
+                                    <option value="url">URL</option>
+                                    <option value="json">JSON</option>
+                                </select>
+                            </div>
+                            
+                            <div class="field-inline">
+                                <label>
+                                    <input type="checkbox" id="private" name="private">
+                                    Private
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Social media section -->
+                    <div id="social-section">
+                        <div class="field">
+                            <label>
+                                <input type="checkbox" id="mastodon-enabled" name="mastodon-enabled">
+                                Post to Mastodon
+                            </label>
+                        </div>
+                        
+                        <div id="mastodon-options" class="hidden">
+                            <div class="field">
+                                <label for="mastodon-text">Post Text</label>
+                                <textarea id="mastodon-text" name="mastodon-text" rows="2" 
+                                          placeholder="Your Mastodon post (tags will be converted to hashtags)"></textarea>
+                            </div>
+                            
+                            <div class="field">
+                                <label for="mastodon-visibility">Visibility</label>
+                                <select id="mastodon-visibility" name="mastodon-visibility">
+                                    <option value="public">Public</option>
+                                    <option value="unlisted">Unlisted</option>
+                                    <option value="private">Followers-only</option>
+                                    <option value="direct">Direct</option>
+                                </select>
+                                <small>Alt text will be used for image accessibility</small>
+                            </div>
+                        </div>
+                        
+                        <div class="field">
+                            <label>
+                                <input type="checkbox" id="bluesky-enabled" name="bluesky-enabled">
+                                Post to Bluesky
+                            </label>
+                        </div>
+                        
+                        <div id="bluesky-options" class="hidden">
+                            <div class="field">
+                                <label for="bluesky-text">Post Text</label>
+                                <textarea id="bluesky-text" name="bluesky-text" rows="2" 
+                                          placeholder="Your Bluesky post (tags will be converted to hashtags)"></textarea>
+                                <small>All Bluesky posts are public. 300 character limit.</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="buttons">
+                        <button type="submit" id="upload-btn">Upload</button>
+                        <button type="button" id="cancel-btn">Cancel</button>
+                    </div>
+                </form>
             </div>
-            
-            <div class="field">
-                <label for="alt">Alt Text</label>
-                <textarea id="alt" name="alt" rows="2" placeholder="Alt text for accessibility"></textarea>
-            </div>
-            
-            <div class="field">
-                <label for="description">Description</label>
-                <textarea id="description" name="description" rows="3" placeholder="Photo description"></textarea>
-            </div>
-            
-            <div class="field">
-                <label for="tags">Tags</label>
-                <input type="text" id="tags" name="tags" 
-                       placeholder="space-separated tags">
-                <div id="tag-suggestions" class="suggestions hidden"></div>
-            </div>
-            
-            <div class="options">
-                <div class="field-inline">
-                    <label>Format:</label>
-                    <select id="format">
-                        <option value="markdown">Markdown</option>
-                        <option value="html">HTML</option>
-                        <option value="url">URL</option>
-                        <option value="json">JSON</option>
-                    </select>
-                </div>
-                
-                <div class="field-inline">
-                    <label>
-                        <input type="checkbox" id="private" name="private">
-                        Private
-                    </label>
-                </div>
-            </div>
-            
-            <div class="field">
-                <label>
-                    <input type="checkbox" id="mastodon-enabled" name="mastodon-enabled">
-                    Post to Mastodon
-                </label>
-            </div>
-            
-            <div id="mastodon-options" class="hidden">
-                <div class="field">
-                    <label for="mastodon-text">Post Text</label>
-                    <textarea id="mastodon-text" name="mastodon-text" rows="3" 
-                              placeholder="Your Mastodon post (tags will be converted to hashtags)"></textarea>
-                </div>
-                
-                <div class="field">
-                    <label for="mastodon-visibility">Visibility</label>
-                    <select id="mastodon-visibility" name="mastodon-visibility">
-                        <option value="public">Public</option>
-                        <option value="unlisted">Unlisted</option>
-                        <option value="private">Followers-only</option>
-                        <option value="direct">Direct</option>
-                    </select>
-                    <small>Alt text will be used for image accessibility</small>
-                </div>
-            </div>
-            
-            <div class="field">
-                <label>
-                    <input type="checkbox" id="bluesky-enabled" name="bluesky-enabled">
-                    Post to Bluesky
-                </label>
-            </div>
-            
-            <div id="bluesky-options" class="hidden">
-                <div class="field">
-                    <label for="bluesky-text">Post Text</label>
-                    <textarea id="bluesky-text" name="bluesky-text" rows="3" 
-                              placeholder="Your Bluesky post (tags will be converted to hashtags)"></textarea>
-                    <small>All Bluesky posts are public. 300 character limit.</small>
-                </div>
-            </div>
-            
-            <div class="buttons">
-                <button type="submit" id="upload-btn">Upload</button>
-                <button type="button" id="cancel-btn">Cancel</button>
-            </div>
-        </form>
+        </div>
         
-        <!-- Move progress and messages outside form for overlay positioning -->
+        <!-- Progress and messages overlays -->
         <div id="progress" class="overlay hidden">
             <div class="overlay-content">
                 <div class="spinner"></div>

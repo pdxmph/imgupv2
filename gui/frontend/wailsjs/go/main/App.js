@@ -14,8 +14,20 @@ export function GetSelectedPhoto() {
   return window['go']['main']['App']['GetSelectedPhoto']();
 }
 
+export function GetSelectedPhotos() {
+  return window['go']['main']['App']['GetSelectedPhotos']();
+}
+
 export function ResizeWindow(arg1) {
   return window['go']['main']['App']['ResizeWindow'](arg1);
+}
+
+export function StartThumbnailGeneration(arg1) {
+  return window['go']['main']['App']['StartThumbnailGeneration'](arg1);
+}
+
+export function TestMultiSelect() {
+  return window['go']['main']['App']['TestMultiSelect']();
 }
 
 export function Upload(arg1) {

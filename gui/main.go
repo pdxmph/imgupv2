@@ -20,10 +20,10 @@ func main() {
 	// Create application with options
 	err := wails.Run(&options.App{
 		Title:     "imgupv2",
-		Width:     580,
-		Height:    510,
-		MinWidth:  500,
-		MinHeight: 480,
+		Width:     900,
+		Height:    650,
+		MinWidth:  800,
+		MinHeight: 600,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

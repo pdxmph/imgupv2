@@ -8,6 +8,12 @@ export function GetRecentTags():Promise<Array<string>>;
 
 export function GetSelectedPhoto():Promise<main.PhotoMetadata>;
 
+export function GetSelectedPhotos():Promise<Array<main.PhotoMetadata>>;
+
 export function ResizeWindow(arg1:boolean):Promise<void>;
+
+export function StartThumbnailGeneration(arg1:Array<main.PhotoMetadata>):Promise<void>;
+
+export function TestMultiSelect():Promise<string>;
 
 export function Upload(arg1:main.PhotoMetadata):Promise<main.UploadResult>;

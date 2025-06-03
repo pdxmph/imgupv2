@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -20,6 +21,7 @@ import (
 type App struct {
 	ctx       context.Context
 	thumbGen  *thumbnail.Generator
+	cachedPhotoIDs map[string]bool // Track which Photos IDs already have cached thumbnails
 }
 
 // PhotoMetadata represents the metadata for a photo
@@ -44,6 +46,8 @@ type PhotoMetadata struct {
 	IsTemporary  bool   `json:"isTemporary"`  // True if from Photos app
 	IsFromPhotos bool   `json:"isFromPhotos"` // True if selected from Photos
 	PhotosIndex  int    `json:"photosIndex"`  // Index of photo in Photos selection
+	PhotosID     string `json:"photosId"`     // Unique ID from Photos.app
+	PhotosFilename string `json:"photosFilename"` // Original filename in Photos
 }
 
 // UploadResult represents the result of an upload operation
@@ -58,28 +62,37 @@ type UploadResult struct {
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	return &App{
+		cachedPhotoIDs: make(map[string]bool),
+	}
 }
 
 // startup is called when the app starts. The context is saved
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
+	fmt.Println("DEBUG: startup called")
 	a.ctx = ctx
 	
 	// Initialize thumbnail generator with cache
+	fmt.Println("DEBUG: initializing cache")
 	cache, err := duplicate.NewSQLiteCache(duplicate.DefaultCachePath())
 	if err == nil {
+		fmt.Println("DEBUG: cache initialized successfully")
 		a.thumbGen = thumbnail.NewGenerator(cache)
 	} else {
+		fmt.Printf("DEBUG: cache init failed: %v\n", err)
 		// Fall back to no-cache generator
 		a.thumbGen = thumbnail.NewGenerator(nil)
 	}
 	
+	fmt.Println("DEBUG: starting window show goroutine")
 	// Show the window initially if a photo is selected
 	go func() {
 		// Single quick check after brief delay for app initialization
 		time.Sleep(100 * time.Millisecond)
+		fmt.Println("DEBUG: checking for selected photo")
 		metadata, err := a.GetSelectedPhoto()
+		fmt.Printf("DEBUG: GetSelectedPhoto returned: %v, err: %v\n", metadata != nil, err)
 		if err == nil && (metadata.Path != "" || metadata.IsFromPhotos) {
 			// Photo is selected, show the window
 			wailsRuntime.WindowShow(a.ctx)
@@ -87,7 +100,9 @@ func (a *App) startup(ctx context.Context) {
 			// No photo selected, show window anyway
 			wailsRuntime.WindowShow(a.ctx)
 		}
+		fmt.Println("DEBUG: window show complete")
 	}()
+	fmt.Println("DEBUG: startup complete")
 }
 
 // shutdown is called when the app is closing
@@ -278,8 +293,22 @@ func (a *App) getPhotoMetadataFromPhotosApp() (*PhotoMetadata, error) {
 			end repeat
 		end try
 		
+		-- Get unique identifier
+		try
+			set pId to id of photo
+		on error
+			set pId to ""
+		end try
+		
+		-- Get filename
+		try
+			set pFilename to filename of photo
+		on error
+			set pFilename to ""
+		end try
+		
 		-- Build result string with delimiters
-		set exportResult to "TITLE:" & pTitle & "|DESC:" & pDesc & "|KEYWORDS:"
+		set exportResult to "ID:" & pId & "|FILENAME:" & pFilename & "|TITLE:" & pTitle & "|DESC:" & pDesc & "|KEYWORDS:"
 		if (count of pKeywords) > 0 then
 			set AppleScript's text item delimiters to ","
 			set exportResult to exportResult & (pKeywords as string)
@@ -301,12 +330,16 @@ func (a *App) getPhotoMetadataFromPhotosApp() (*PhotoMetadata, error) {
 	}
 	
 	// Parse the metadata
-	var title, desc string
+	var title, desc, photoID, filename string
 	var keywords []string
 	
 	parts := strings.Split(result, "|")
 	for _, part := range parts {
-		if strings.HasPrefix(part, "TITLE:") {
+		if strings.HasPrefix(part, "ID:") {
+			photoID = strings.TrimPrefix(part, "ID:")
+		} else if strings.HasPrefix(part, "FILENAME:") {
+			filename = strings.TrimPrefix(part, "FILENAME:")
+		} else if strings.HasPrefix(part, "TITLE:") {
 			title = strings.TrimPrefix(part, "TITLE:")
 		} else if strings.HasPrefix(part, "DESC:") {
 			desc = strings.TrimPrefix(part, "DESC:")
@@ -320,19 +353,58 @@ func (a *App) getPhotoMetadataFromPhotosApp() (*PhotoMetadata, error) {
 	
 	// Create metadata object
 	metadata := &PhotoMetadata{
-		Path:         "", // Will be set when exported
-		Title:        title,
-		Alt:          desc, // Use description as alt text
-		Description:  desc,
-		Tags:         keywords,
-		Format:       "markdown", // default
-		Private:      false,      // default to public
-		IsFromPhotos: true,
-		PhotosIndex:  1, // Always first in selection for now
+		Path:           "", // Will be set when exported
+		Title:          title,
+		Alt:            desc, // Use description as alt text
+		Description:    desc,
+		Tags:           keywords,
+		Format:         "markdown", // default
+		Private:        false,      // default to public
+		IsFromPhotos:   true,
+		PhotosIndex:    1, // Always first in selection for now
+		PhotosID:       photoID,
+		PhotosFilename: filename,
 	}
 	
+	// Check if we have a cached thumbnail for this Photos ID
+	if a.thumbGen != nil && photoID != "" {
+		// Use Photos ID as cache key for consistent lookups
+		if thumb, err := a.thumbGen.GetCachedThumbnail(context.Background(), photoID); err == nil && thumb != nil {
+			fmt.Printf("DEBUG: Found cached thumbnail for Photos ID: %s\n", photoID)
+			// Mark this Photos ID as having a cached thumbnail
+			a.cachedPhotoIDs[photoID] = true
+			
+			// Store the thumbnail data in the metadata to be sent to frontend
+			metadata.Thumbnail = "data:image/jpeg;base64," + thumb.ThumbnailData
+			metadata.ImageWidth = thumb.Width
+			metadata.ImageHeight = thumb.Height
+			metadata.FileSize = int64(thumb.FileSize)
+			
+			// Still start the export for upload purposes (but no new thumbnail generation)
+			go func(photosID string) {
+				exportPath, err := a.exportPhotoFromPhotosApp()
+				if err != nil {
+					fmt.Printf("Failed to export photo: %v\n", err)
+					return
+				}
+				// Update the path in metadata
+				wailsRuntime.EventsEmit(a.ctx, "photos-path-ready", map[string]interface{}{
+					"path": exportPath,
+				})
+			}(metadata.PhotosID)
+			
+			return metadata, nil
+		} else {
+			fmt.Printf("DEBUG: No cached thumbnail found for Photos ID: %s (err: %v)\n", photoID, err)
+		}
+	} else {
+		fmt.Printf("DEBUG: Cache check skipped - thumbGen: %v, photoID: '%s'\n", a.thumbGen != nil, photoID)
+	}
+	
+	// No cached thumbnail, proceed with normal async export
+	
 	// Start async export for preview
-	go func() {
+	go func(photosID string) {
 		exportPath, err := a.exportPhotoFromPhotosApp()
 		if err != nil {
 			fmt.Printf("Failed to export photo for preview: %v\n", err)
@@ -342,6 +414,23 @@ func (a *App) getPhotoMetadataFromPhotosApp() (*PhotoMetadata, error) {
 		// Generate thumbnail
 		if a.thumbGen != nil {
 			if result, err := a.thumbGen.Generate(context.Background(), exportPath, 100); err == nil {
+				// Save to cache with Photos ID if available
+				if photosID != "" {
+					thumb := &duplicate.Thumbnail{
+						FileMD5:       photosID, // Use Photos ID as key
+						ThumbnailData: result.ThumbnailData,
+						Width:         result.Info.Width,
+						Height:        result.Info.Height,
+						FileSize:      result.Info.FileSize,
+						CreatedAt:     time.Now(),
+					}
+					if err := a.thumbGen.SaveThumbnail(thumb); err != nil {
+						fmt.Printf("DEBUG: Failed to save thumbnail to cache: %v\n", err)
+					} else {
+						fmt.Printf("DEBUG: Saved thumbnail to cache with Photos ID: %s\n", photosID)
+					}
+				}
+				
 				// Send both the path and thumbnail to frontend
 				wailsRuntime.EventsEmit(a.ctx, "photos-export-ready", map[string]interface{}{
 					"path":      exportPath,
@@ -352,7 +441,7 @@ func (a *App) getPhotoMetadataFromPhotosApp() (*PhotoMetadata, error) {
 				})
 			}
 		}
-	}()
+	}(metadata.PhotosID)
 	
 	return metadata, nil
 }
@@ -376,7 +465,7 @@ func (a *App) exportPhotoFromPhotosApp() (string, error) {
 		end if
 		set photo to item 1 of sel
 		
-		-- Export with most recent edits as JPEG
+		-- Export with most recent edits
 		export {photo} to (POSIX file tempFolder)
 		
 		return "OK"
@@ -407,6 +496,22 @@ func (a *App) exportPhotoFromPhotosApp() (string, error) {
 	
 	// Get the most recent file
 	exportedPath := filepath.Join(tempDir, files[0].Name())
+	
+	// Check if it's a HEIC file and convert to JPEG if needed
+	ext := strings.ToLower(filepath.Ext(exportedPath))
+	if ext == ".heic" || ext == ".heif" {
+		// Convert HEIC to JPEG using sips (built into macOS)
+		jpegPath := strings.TrimSuffix(exportedPath, ext) + ".jpg"
+		cmd := exec.Command("sips", "-s", "format", "jpeg", exportedPath, "--out", jpegPath)
+		if err := cmd.Run(); err != nil {
+			// Try to continue with HEIC file anyway
+			fmt.Printf("Warning: failed to convert HEIC to JPEG: %v\n", err)
+		} else {
+			// Remove original HEIC and use JPEG
+			os.Remove(exportedPath)
+			exportedPath = jpegPath
+		}
+	}
 	
 	// Schedule cleanup after 60 seconds (giving time for upload)
 	go func() {
@@ -946,4 +1051,194 @@ func (a *App) ForceUpload(metadata PhotoMetadata) (*UploadResult, error) {
 		Duplicate: false, // Force upload always creates new upload
 		ForceAvailable: false,
 	}, nil
+}
+
+// generateThumbnail generates a base64-encoded thumbnail for an image
+func (a *App) generateThumbnail(imagePath string) (string, error) {
+	fmt.Printf("DEBUG: generateThumbnail called for: %s\n", imagePath)
+	
+	// Check file extension
+	ext := strings.ToLower(filepath.Ext(imagePath))
+	isRaw := ext == ".dng" || ext == ".raw" || ext == ".cr2" || ext == ".nef" || ext == ".arw"
+	
+	// Use sips on macOS to generate thumbnail
+	tempFile, err := os.CreateTemp("", fmt.Sprintf("thumb-%d-*.jpg", time.Now().UnixNano()))
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tempFile.Name())
+	tempFile.Close()
+	
+	fmt.Printf("DEBUG: Temp thumbnail file: %s\n", tempFile.Name())
+	
+	// For raw files, try to extract embedded JPEG first
+	if isRaw {
+		// Try using exiftool to extract embedded preview
+		exifPaths := []string{
+			"/opt/homebrew/bin/exiftool",
+			"/usr/local/bin/exiftool",
+		}
+		
+		var exifPath string
+		for _, path := range exifPaths {
+			if fileExists(path) {
+				exifPath = path
+				break
+			}
+		}
+		
+		if exifPath != "" {
+			// Extract preview image
+			cmd := exec.Command(exifPath, "-b", "-PreviewImage", imagePath)
+			previewData, err := cmd.Output()
+			if err == nil && len(previewData) > 0 {
+				// Write preview to temp file
+				if err := os.WriteFile(tempFile.Name(), previewData, 0644); err == nil {
+					// Try to resize the preview
+					resizeCmd := exec.Command("sips", "-Z", "64", tempFile.Name())
+					if resizeCmd.Run() == nil {
+						// Read the resized thumbnail
+						thumbData, err := os.ReadFile(tempFile.Name())
+						if err == nil {
+							return fmt.Sprintf("data:image/jpeg;base64,%s", base64.StdEncoding.EncodeToString(thumbData)), nil
+						}
+					}
+					// If resize failed, just use the preview as-is
+					return fmt.Sprintf("data:image/jpeg;base64,%s", base64.StdEncoding.EncodeToString(previewData)), nil
+				}
+			}
+		}
+		
+		// If we can't extract preview, try using qlmanage to generate thumbnail
+		// Create a unique output directory for this thumbnail
+		outputDir := filepath.Join(os.TempDir(), fmt.Sprintf("ql-%d", time.Now().UnixNano()))
+		os.MkdirAll(outputDir, 0755)
+		defer os.RemoveAll(outputDir)
+		
+		qlCmd := exec.Command("qlmanage", "-t", "-s", "64", "-o", outputDir, imagePath)
+		qlCmd.Run() // Ignore errors, it creates files with specific names
+		
+		// qlmanage creates files with .png extension
+		qlThumbPath := filepath.Join(outputDir, filepath.Base(imagePath)+".png")
+		fmt.Printf("DEBUG: Looking for qlmanage thumbnail at: %s\n", qlThumbPath)
+		if thumbData, err := os.ReadFile(qlThumbPath); err == nil {
+			result := fmt.Sprintf("data:image/png;base64,%s", base64.StdEncoding.EncodeToString(thumbData))
+			fmt.Printf("DEBUG: Generated thumbnail via qlmanage for raw, size: %d bytes\n", len(thumbData))
+			return result, nil
+		}
+		
+		// If all else fails for raw files, return empty
+		return "", fmt.Errorf("unable to generate thumbnail for raw file %s", ext)
+	}
+	
+	// For non-raw files, use sips directly
+	cmd := exec.Command("sips", "-Z", "64", imagePath, "--out", tempFile.Name())
+	if err := cmd.Run(); err != nil {
+		// Try qlmanage as fallback
+		outputDir := filepath.Join(os.TempDir(), fmt.Sprintf("ql-%d", time.Now().UnixNano()))
+		os.MkdirAll(outputDir, 0755)
+		defer os.RemoveAll(outputDir)
+		
+		qlCmd := exec.Command("qlmanage", "-t", "-s", "64", "-o", outputDir, imagePath)
+		if err := qlCmd.Run(); err != nil {
+			return "", fmt.Errorf("failed to generate thumbnail: %w", err)
+		}
+		
+		// qlmanage creates files with .png extension
+		qlThumbPath := filepath.Join(outputDir, filepath.Base(imagePath)+".png")
+		if thumbData, err := os.ReadFile(qlThumbPath); err == nil {
+			result := fmt.Sprintf("data:image/png;base64,%s", base64.StdEncoding.EncodeToString(thumbData))
+			fmt.Printf("DEBUG: Generated thumbnail via qlmanage fallback, size: %d bytes\n", len(thumbData))
+			return result, nil
+		}
+		
+		return "", fmt.Errorf("failed to generate thumbnail: %w", err)
+	}
+	
+	// Read the thumbnail file
+	thumbData, err := os.ReadFile(tempFile.Name())
+	if err != nil {
+		return "", err
+	}
+	
+	// Convert to base64
+	result := fmt.Sprintf("data:image/jpeg;base64,%s", base64.StdEncoding.EncodeToString(thumbData))
+	fmt.Printf("DEBUG: Generated thumbnail via sips, size: %d bytes, first 20 chars of base64: %s...\n", 
+		len(thumbData), result[22:42])
+	return result, nil
+}
+
+// extractMetadata extracts metadata from an image file
+func (a *App) extractMetadata(imagePath string) PhotoMetadata {
+	metadata := PhotoMetadata{
+		Path: imagePath,
+		Format: "markdown",
+	}
+	
+	// Try to extract metadata using exiftool
+	exifPaths := []string{
+		"/opt/homebrew/bin/exiftool",
+		"/usr/local/bin/exiftool", 
+	}
+	
+	var exifPath string
+	for _, path := range exifPaths {
+		if fileExists(path) {
+			exifPath = path
+			break
+		}
+	}
+	
+	if exifPath != "" {
+		// Extract title and keywords using exiftool
+		cmd := exec.Command(exifPath, "-Title", "-Subject", "-Keywords", "-Description", "-j", imagePath)
+		out, err := cmd.Output()
+		if err == nil {
+			var exifData []map[string]interface{}
+			if err := json.Unmarshal(out, &exifData); err == nil && len(exifData) > 0 {
+				data := exifData[0]
+				
+				if title, ok := data["Title"].(string); ok {
+					metadata.Title = title
+				}
+				
+				if desc, ok := data["Description"].(string); ok {
+					metadata.Description = desc
+					metadata.Alt = desc // Use description as alt text
+				}
+				
+				// Extract keywords/tags
+				var tags []string
+				if keywords, ok := data["Keywords"]; ok {
+					switch v := keywords.(type) {
+					case string:
+						tags = append(tags, v)
+					case []interface{}:
+						for _, tag := range v {
+							if s, ok := tag.(string); ok {
+								tags = append(tags, s)
+							}
+						}
+					}
+				}
+				
+				if subject, ok := data["Subject"]; ok {
+					switch v := subject.(type) {
+					case string:
+						tags = append(tags, v)
+					case []interface{}:
+						for _, tag := range v {
+							if s, ok := tag.(string); ok {
+								tags = append(tags, s)
+							}
+						}
+					}
+				}
+				
+				metadata.Tags = tags
+			}
+		}
+	}
+	
+	return metadata
 }

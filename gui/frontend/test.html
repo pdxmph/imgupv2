@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multi-Select Test</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+        #result {
+            white-space: pre-wrap;
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Multi-Selection Test</h1>
+    <button onclick="testMultiSelect()">Test GetSelectedPhotos()</button>
+    <div id="result"></div>
+
+    <script>
+        async function testMultiSelect() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = 'Testing...';
+            
+            try {
+                const result = await window.go.main.App.TestMultiSelect();
+                resultDiv.textContent = result;
+            } catch (err) {
+                resultDiv.textContent = 'Error: ' + err;
+            }
+        }
+    </script>
+</body>
+</html>

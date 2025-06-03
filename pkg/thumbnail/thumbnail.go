@@ -29,6 +29,22 @@ func NewGenerator(cache *duplicate.SQLiteCache) *Generator {
 	return &Generator{cache: cache}
 }
 
+// GetCachedThumbnail retrieves a thumbnail from cache by key
+func (g *Generator) GetCachedThumbnail(ctx context.Context, key string) (*duplicate.Thumbnail, error) {
+	if g.cache == nil {
+		return nil, fmt.Errorf("no cache available")
+	}
+	return g.cache.GetThumbnail(ctx, key)
+}
+
+// SaveThumbnail saves a thumbnail to cache
+func (g *Generator) SaveThumbnail(thumb *duplicate.Thumbnail) error {
+	if g.cache == nil {
+		return fmt.Errorf("no cache available")
+	}
+	return g.cache.SaveThumbnail(thumb)
+}
+
 // ImageInfo contains information about an image
 type ImageInfo struct {
 	Width    int
