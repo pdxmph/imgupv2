@@ -22,6 +22,8 @@ type DefaultConfig struct {
 	Format         string `json:"format,omitempty"`
 	Service        string `json:"service,omitempty"`
 	DuplicateCheck *bool  `json:"duplicate_check,omitempty"`  // nil means use default (true)
+	PullService    string `json:"pull_service,omitempty"`     // default service for pull command
+	PullCount      int    `json:"pull_count,omitempty"`       // default number of images to pull
 }
 
 // FlickrConfig holds Flickr-specific configuration
@@ -31,6 +33,7 @@ type FlickrConfig struct {
 	AccessToken    string `json:"access_token,omitempty"`
 	AccessSecret   string `json:"access_secret,omitempty"`
 	UserID         string `json:"user_id,omitempty"`
+	PullAlbum      string `json:"pull_album,omitempty"`      // default album for pull command
 }
 
 // MastodonConfig holds Mastodon-specific configuration
@@ -55,6 +58,7 @@ type SmugMugConfig struct {
 	AccessToken    string `json:"access_token,omitempty"`
 	AccessSecret   string `json:"access_secret,omitempty"`
 	AlbumID        string `json:"album_id,omitempty"`
+	PullAlbum      string `json:"pull_album,omitempty"`      // default album for pull command
 }
 
 // DefaultTemplates returns the default output templates

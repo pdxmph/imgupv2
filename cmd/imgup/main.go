@@ -168,7 +168,7 @@ with support for metadata embedding and multiple output formats.`,
 	}
 
 	// Add commands to root
-	rootCmd.AddCommand(authCmd, uploadCmd, checkCmd, configCmd, versionCmd)
+	rootCmd.AddCommand(authCmd, uploadCmd, checkCmd, configCmd, versionCmd, createPullCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

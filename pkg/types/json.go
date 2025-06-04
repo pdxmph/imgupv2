@@ -80,3 +80,38 @@ type SocialPostResult struct {
 	URL     string  `json:"url,omitempty"`
 	Error   *string `json:"error"`
 }
+
+// PullRequest represents the JSON format for pull operations
+type PullRequest struct {
+	Source  PullSource    `json:"source"`
+	Images  []PullImage   `json:"images"`
+	Targets []string      `json:"targets,omitempty"`      // ["mastodon", "bluesky"]
+	Visibility string     `json:"visibility,omitempty"`    // for mastodon
+	Format  string        `json:"format,omitempty"`        // output format: social, markdown, html
+}
+
+// PullSource identifies where images are pulled from
+type PullSource struct {
+	Service string `json:"service"`           // "smugmug" or "flickr"
+	Album   string `json:"album,omitempty"`   // album name
+}
+
+// PullImage represents an image that can be selected for posting
+type PullImage struct {
+	ID          string      `json:"id"`                     // temporary ID for selection
+	Title       string      `json:"title"`
+	Description string      `json:"description,omitempty"`
+	SourceURL   string      `json:"source_url"`             // original photo page
+	Sizes       ImageSizes  `json:"sizes"`
+	Post        string      `json:"post,omitempty"`         // social media post text
+	Alt         string      `json:"alt,omitempty"`          // alt text
+	Tags        []string    `json:"tags,omitempty"`         // from source service
+}
+
+// ImageSizes contains URLs for different image sizes
+type ImageSizes struct {
+	Large  string `json:"large"`
+	Medium string `json:"medium"`
+	Small  string `json:"small"`
+	Thumb  string `json:"thumb"`
+}
