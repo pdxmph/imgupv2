@@ -7,12 +7,11 @@ A fast, Unix-friendly command-line tool for uploading images to Flickr and SmugM
 imgupv2 is a complete Go rewrite of the original Ruby-based imgup-cli. It's designed for photographers who want to quickly upload images to their favorite photo sharing services and get shareable links back.
 
 **Key features:**
-- 🚀 Fast uploads - typically under 2 seconds from selection to completion
-- 📸 Supports both Flickr and SmugMug photo services
-- 🔗 Multiple output formats: URLs, Markdown, HTML, JSON, Org-mode
-- 🔒 Secure OAuth authentication (no more copy-pasting callback URLs!)
+- 📸 Supports Flickr and SmugMug photo services
+- 🔗 Multiple output formats: URLs, Markdown, HTML, JSON, Org-mode, or make your own template
 - ⚙️ Configurable defaults for format and service
-- 💻 Single static binary - truly no runtime dependencies
+- 💻 Single static binary - no runtime dependencies
+- 🖱️ Optional GUI for uploads from Photos or Finder
 
 ## Installation
 
@@ -167,7 +166,7 @@ imgup upload --format custom photo.jpg
 ## Requirements
 
 - macOS or Linux
-- That's it! No external dependencies required.
+- No external dependencies required.
 
 ## Differences from imgup-cli (Ruby version)
 
@@ -211,12 +210,10 @@ imgup config show
 imgupv2 includes an experimental duplicate detection feature that can prevent re-uploading images you've already uploaded. This feature is **OFF by default** due to potential issues.
 
 ### Known Issues
-- You can use it to get snippets and links back quickly if you've already uploaded an image, but it breaks with social posting if you've deleted the photo from the service
-- **Deleted photos remain in cache** - If you delete photos from Flickr/SmugMug, the cache still references them. Clear the cache or use `--force` flag
-- May incorrectly identify your images as duplicates of other users' photos if not properly configured
-- Requires re-authentication after enabling to fetch your user ID
+- **Deleted photo links remain in cache** - If you delete photos from Flickr/SmugMug, the cache still references them. Clear the cache or use `--force` flag to re-upload a deleted image. 
+- Requires re-authentication after enabling to fetch your user ID. 
 - Cache database can become corrupted
-- Should only be used if you understand the risks
+- Use this feature if you tend to upload images and leave them up. 
 
 ### How to Enable
 
@@ -262,7 +259,7 @@ If you experience issues:
    imgup upload --force photo.jpg
    ```
 
-5. **If it's too much overhead, leave it disabled** - imgupv2 is designed as a "fire and forget" uploader, not a photo manager
+5. **If it's too much overhead, leave it disabled** - imgupv2 is a "fire and forget" uploader, not a photo manager
 
 ## Troubleshooting
 
@@ -326,3 +323,5 @@ This project uses the following excellent Go libraries:
 - [dghubble/oauth1](https://github.com/dghubble/oauth1) - OAuth 1.0 implementation for Flickr authentication
 - [spf13/cobra](https://github.com/spf13/cobra) - Modern CLI library for creating powerful commands
 - [google/uuid](https://github.com/google/uuid) - UUID generation for request tracking
+- [mattn/go-sqlite3](https://github.com/mattn/go-sqlite3) - SQLite driver for duplicate detection cache
+- [wailsapp/wails/v2](https://github.com/wailsapp/wails) - Cross-platform desktop app framework (GUI only)
