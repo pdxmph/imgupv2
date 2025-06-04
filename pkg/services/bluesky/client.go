@@ -73,6 +73,7 @@ type FacetFeature struct {
 	Type string `json:"$type"`
 	URI  string `json:"uri,omitempty"`
 	DID  string `json:"did,omitempty"`
+	Tag  string `json:"tag,omitempty"`
 }
 
 // Embed represents an embedded object (images)
@@ -165,6 +166,10 @@ func detectHashtags(text string) []Facet {
 			start := match[2]
 			end := match[3]
 			
+			// Extract the hashtag text (without the # symbol)
+			hashtag := text[start:end]
+			tagValue := strings.TrimPrefix(hashtag, "#")
+			
 			facet := Facet{
 				Index: FacetIndex{
 					ByteStart: len(text[:start]),
@@ -173,7 +178,7 @@ func detectHashtags(text string) []Facet {
 				Features: []FacetFeature{
 					{
 						Type: "app.bsky.richtext.facet#tag",
-						// Bluesky doesn't use URI for hashtags, just the type
+						Tag:  tagValue,
 					},
 				},
 			}
