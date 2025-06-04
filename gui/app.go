@@ -92,12 +92,13 @@ type MultiPhotoUploadResult struct {
 
 // MultiPhotoOutputResult represents the result for a single photo
 type MultiPhotoOutputResult struct {
-	Path     string `json:"path"`
-	URL      string `json:"url"`
-	Alt      string `json:"alt"`
-	Markdown string `json:"markdown,omitempty"`
-	HTML     string `json:"html,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Path      string `json:"path"`
+	URL       string `json:"url"`
+	Alt       string `json:"alt"`
+	Markdown  string `json:"markdown,omitempty"`
+	HTML      string `json:"html,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Duplicate bool   `json:"duplicate"` // Track if this was a duplicate
 }
 
 // NewApp creates a new App application struct

@@ -264,9 +264,10 @@ func (a *App) UploadMultiplePhotos(request MultiPhotoUploadRequest) (*MultiPhoto
 	for i, upload := range jsonResponse.Uploads {
 		if i < len(request.Images) {
 			output := MultiPhotoOutputResult{
-				Path: request.Images[i].Path,
-				URL:  upload.URL,
-				Alt:  request.Images[i].Alt,
+				Path:      request.Images[i].Path,
+				URL:       upload.URL,
+				Alt:       request.Images[i].Alt,
+				Duplicate: upload.Duplicate, // Pass duplicate status to frontend
 			}
 			
 			if upload.Error != nil {

@@ -773,6 +773,17 @@ async function handleMultiPhotoUpload() {
             const outputs = result.outputs || [];
             let clipboardContent = '';
             
+            // Count duplicates and new uploads
+            let duplicateCount = 0;
+            let newUploadCount = 0;
+            outputs.forEach(output => {
+                if (output.duplicate) {
+                    duplicateCount++;
+                } else {
+                    newUploadCount++;
+                }
+            });
+            
             switch (uploadData.format) {
                 case 'markdown':
                     clipboardContent = outputs.map(o => o.markdown || o.url).join('\n');
@@ -793,12 +804,24 @@ async function handleMultiPhotoUpload() {
                 await navigator.clipboard.writeText(clipboardContent);
             }
             
-            let successMessage = `Successfully uploaded ${outputs.length} photos! URLs copied to clipboard.`;
+            // Build success message based on what was uploaded
+            let successMessage = '';
+            if (duplicateCount > 0 && newUploadCount > 0) {
+                successMessage = `Uploaded ${newUploadCount} new photo${newUploadCount > 1 ? 's' : ''} and found ${duplicateCount} duplicate${duplicateCount > 1 ? 's' : ''}!`;
+            } else if (duplicateCount > 0) {
+                successMessage = `All ${duplicateCount} photo${duplicateCount > 1 ? 's were' : ' was'} already uploaded (duplicate${duplicateCount > 1 ? 's' : ''})!`;
+            } else {
+                successMessage = `Successfully uploaded ${newUploadCount} photo${newUploadCount > 1 ? 's' : ''}!`;
+            }
+            successMessage += ' URLs copied to clipboard.';
+            
             if (result.socialStatus) {
                 successMessage += ` ${result.socialStatus}.`;
             }
             
-            showSuccess(successMessage);
+            // Show as duplicate type if all were duplicates
+            const messageType = (duplicateCount > 0 && newUploadCount === 0) ? 'duplicate' : 'normal';
+            showSuccess(successMessage, messageType);
             setTimeout(() => window.runtime.Quit(), 2000);
         } else {
             throw new Error(result.error || 'Upload failed');

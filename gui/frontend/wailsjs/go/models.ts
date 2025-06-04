@@ -31,6 +31,7 @@ export namespace main {
 	    markdown?: string;
 	    html?: string;
 	    error?: string;
+	    duplicate: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new MultiPhotoOutputResult(source);
@@ -44,6 +45,7 @@ export namespace main {
 	        this.markdown = source["markdown"];
 	        this.html = source["html"];
 	        this.error = source["error"];
+	        this.duplicate = source["duplicate"];
 	    }
 	}
 	export class MultiPhotoUploadRequest {
