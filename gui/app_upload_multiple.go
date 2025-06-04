@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 	
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/pdxmph/imgupv2/pkg/config"
+	"github.com/pdxmph/imgupv2/pkg/templates"
 )
 
 // UploadMultiplePhotos handles uploading multiple photos with shared metadata
@@ -296,25 +299,60 @@ func (a *App) UploadMultiplePhotos(request MultiPhotoUploadRequest) (*MultiPhoto
 				output.Error = *upload.Error
 			}
 			
-			// Generate format-specific output
+			// Generate format-specific output using templates
 			if upload.URL != "" && request.Format != "" {
-				switch request.Format {
-				case "markdown":
-					if output.Alt != "" {
-						output.Markdown = fmt.Sprintf("![%s](%s)", output.Alt, upload.URL)
+				// Debug: Check what URLs we have
+				fmt.Printf("DEBUG: Format=%s, URL=%s, ImageURL=%s\n", request.Format, upload.URL, upload.ImageURL)
+				
+				// Load config to get templates
+				cfg, err := config.Load()
+				if err != nil {
+					// If config fails to load, continue without templates
+					fmt.Printf("ERROR: Failed to load config for templates: %v\n", err)
+				} else {
+					fmt.Printf("DEBUG: Config loaded, Templates=%v\n", cfg.Templates)
+					if cfg.Templates != nil {
+						// Create template variables
+						vars := templates.Variables{
+							PhotoID:     upload.PhotoID,
+							URL:         upload.URL,      // Photo page URL
+							ImageURL:    upload.ImageURL, // Direct image URL (this is what we want!)
+							Filename:    filepath.Base(request.Images[i].Path),
+							Title:       request.Images[i].Title,
+							Description: request.Images[i].Description,
+							Alt:         request.Images[i].Alt,
+						}
+						
+						fmt.Printf("DEBUG: Template vars - ImageURL=%s, Alt=%s\n", vars.ImageURL, vars.Alt)
+						
+						// Debug: Show what template we're using
+						if tmpl, ok := cfg.Templates[request.Format]; ok {
+							fmt.Printf("DEBUG: Using template for %s: %s\n", request.Format, tmpl)
+							
+							// Process the template for the requested format
+							switch request.Format {
+							case "markdown":
+								output.Markdown = templates.Process(tmpl, vars)
+								fmt.Printf("DEBUG: Processed markdown: %s\n", output.Markdown)
+							case "html":
+								output.HTML = templates.Process(tmpl, vars)
+								fmt.Printf("DEBUG: Processed HTML: %s\n", output.HTML)
+							}
+						} else {
+							fmt.Printf("ERROR: No template found for format %s\n", request.Format)
+						}
 					} else {
-						output.Markdown = fmt.Sprintf("![](%s)", upload.URL)
-					}
-				case "html":
-					if output.Alt != "" {
-						output.HTML = fmt.Sprintf(`<img src="%s" alt="%s">`, upload.URL, output.Alt)
-					} else {
-						output.HTML = fmt.Sprintf(`<img src="%s">`, upload.URL)
+						fmt.Printf("ERROR: Templates is nil in config\n")
 					}
 				}
 			}
 			
 			result.Outputs = append(result.Outputs, output)
+			
+			// Debug: log what we're sending to frontend
+			if request.Format == "markdown" && output.Markdown != "" {
+				fmt.Printf("DEBUG: Sending to frontend - Markdown: %s\n", output.Markdown)
+			}
 			
 			// Emit completion event
 			if upload.Error == nil {

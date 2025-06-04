@@ -819,12 +819,17 @@ func (a *App) Upload(metadata PhotoMetadata) (*UploadResult, error) {
 				case "url":
 					snippet = jsonResponse.URL
 				case "markdown":
+					// Use imageURL if available, fall back to URL
+					imageURL := jsonResponse.ImageURL
+					if imageURL == "" {
+						imageURL = jsonResponse.URL
+					}
 					// Basic markdown format
 					title := metadata.Title
 					if title == "" {
 						title = "Image"
 					}
-					snippet = fmt.Sprintf("![%s](%s)", title, jsonResponse.URL)
+					snippet = fmt.Sprintf("![%s](%s)", title, imageURL)
 				case "html":
 					// Basic HTML format
 					altText := metadata.Alt
@@ -1063,12 +1068,17 @@ func (a *App) ForceUpload(metadata PhotoMetadata) (*UploadResult, error) {
 				case "url":
 					snippet = jsonResponse.URL
 				case "markdown":
+					// Use imageURL if available, fall back to URL
+					imageURL := jsonResponse.ImageURL
+					if imageURL == "" {
+						imageURL = jsonResponse.URL
+					}
 					// Basic markdown format
 					title := metadata.Title
 					if title == "" {
 						title = "Image"
 					}
-					snippet = fmt.Sprintf("![%s](%s)", title, jsonResponse.URL)
+					snippet = fmt.Sprintf("![%s](%s)", title, imageURL)
 				case "html":
 					// Basic HTML format
 					altText := metadata.Alt
