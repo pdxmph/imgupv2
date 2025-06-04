@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -150,6 +151,55 @@ func (c *Client) Authenticate() error {
 	return nil
 }
 
+// detectHashtags finds hashtags in text and returns facets for them
+func detectHashtags(text string) []Facet {
+	// Hashtag regex - matches hashtags at word boundaries
+	hashtagRegex := regexp.MustCompile(`(?:^|\s)(#[a-zA-Z][a-zA-Z0-9_]*)\b`)
+	
+	facets := []Facet{}
+	
+	matches := hashtagRegex.FindAllStringSubmatchIndex(text, -1)
+	for _, match := range matches {
+		// match[2] and match[3] are the start and end of the hashtag (capture group)
+		if len(match) >= 4 {
+			start := match[2]
+			end := match[3]
+			
+			facet := Facet{
+				Index: FacetIndex{
+					ByteStart: len(text[:start]),
+					ByteEnd:   len(text[:end]),
+				},
+				Features: []FacetFeature{
+					{
+						Type: "app.bsky.richtext.facet#tag",
+						// Bluesky doesn't use URI for hashtags, just the type
+					},
+				},
+			}
+			facets = append(facets, facet)
+		}
+	}
+	
+	return facets
+}
+
+// detectAllFacets combines URL and hashtag detection
+func detectAllFacets(text string) []Facet {
+	urlFacets := detectURLs(text)
+	hashtagFacets := detectHashtags(text)
+	
+	// Combine all facets
+	allFacets := append(urlFacets, hashtagFacets...)
+	
+	// Sort by byte start position to maintain order
+	sort.Slice(allFacets, func(i, j int) bool {
+		return allFacets[i].Index.ByteStart < allFacets[j].Index.ByteStart
+	})
+	
+	return allFacets
+}
+
 // detectURLs finds URLs in text and returns facets for them
 func detectURLs(text string) []Facet {
 	// URL regex - simplified version that catches most common URLs
@@ -218,8 +268,8 @@ func (c *Client) PostStatus(text string, mediaBlobs []BlobResponse, altTexts []s
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	
-	// Detect URLs and add facets to make them clickable
-	facets := detectURLs(text)
+	// Detect URLs and hashtags and add facets to make them clickable
+	facets := detectAllFacets(text)
 	if len(facets) > 0 {
 		post.Facets = facets
 	}
@@ -301,7 +351,7 @@ func (c *Client) PostStatus(text string, mediaBlobs []BlobResponse, altTexts []s
 	parts := strings.Split(postResp.URI, "/")
 	if len(parts) >= 5 {
 		postID := parts[len(parts)-1]
-		webURL := fmt.Sprintf("https://bsky.app/profile/%s/post/%s", c.Handle, postID)
+		webURL := fmt.Sprintf("https://bsky.app/profile/%s/post/%s", c.DID, postID)
 		fmt.Printf("Posted to Bluesky: %s\n", webURL)
 	}
 	

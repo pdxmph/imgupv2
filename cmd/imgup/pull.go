@@ -245,7 +245,12 @@ func createPullRequest(images []types.PullImage, service, album string) *types.P
 	// Reset IDs to sequential numbers for cleaner JSON
 	for i := range images {
 		images[i].ID = strconv.Itoa(i + 1)
-		images[i].Alt = ""   // User can add
+		// Auto-populate alt text with description if available
+		if images[i].Description != "" {
+			images[i].Alt = images[i].Description
+		} else {
+			images[i].Alt = ""
+		}
 	}
 
 	// Build targets based on flags

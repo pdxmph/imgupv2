@@ -482,7 +482,7 @@ func (api *SmugMugAPI) GetAlbumImages(ctx context.Context, albumKey string) ([]A
 	var allImages []AlbumImageDetail
 	
 	// Start with the first page, requesting MD5 and other metadata
-	nextPage := fmt.Sprintf("%s/api/v2/album/%s!images?count=100&_expand=ArchivedMd5,FileName,ImageKey,UploadKey,DateTimeOriginal,DateTimeUploaded,Keywords,OriginalSize",
+	nextPage := fmt.Sprintf("%s/api/v2/album/%s!images?count=100&_expand=ArchivedMd5,FileName,ImageKey,UploadKey,DateTimeOriginal,DateTimeUploaded,Keywords,OriginalSize,Caption,Title",
 		smugmugAPIURL, albumKey)
 	
 	for nextPage != "" {
