@@ -699,16 +699,6 @@ async function handleMultiPhotoUpload() {
     // Save current photo data
     saveCurrentPhotoData();
     
-    // Validate all photos have alt text
-    const missingAlt = window.multiPhotoData.filter(p => !p.alt);
-    if (missingAlt.length > 0) {
-        const firstMissing = missingAlt[0];
-        selectPhoto(firstMissing.index);
-        document.getElementById('alt').focus();
-        showError(`Please provide alt text for all photos (${missingAlt.length} missing)`);
-        return;
-    }
-    
     // Get social media settings from form
     const form = document.getElementById('upload-form');
     
