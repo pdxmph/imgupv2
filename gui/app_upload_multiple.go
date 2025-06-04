@@ -13,6 +13,11 @@ import (
 
 // UploadMultiplePhotos handles uploading multiple photos with shared metadata
 func (a *App) UploadMultiplePhotos(request MultiPhotoUploadRequest) (*MultiPhotoUploadResult, error) {
+	// Debug logging to trace the issue
+	fmt.Printf("DEBUG: UploadMultiplePhotos called\n")
+	fmt.Printf("DEBUG: Request - Mastodon: %v, Bluesky: %v\n", request.Mastodon, request.Bluesky)
+	fmt.Printf("DEBUG: Request - Post text: %s\n", request.Post)
+	
 	result := &MultiPhotoUploadResult{
 		Success: true,
 		Outputs: []MultiPhotoOutputResult{},
@@ -58,6 +63,8 @@ func (a *App) UploadMultiplePhotos(request MultiPhotoUploadRequest) (*MultiPhoto
 	if request.Mastodon || request.Bluesky {
 		social := map[string]interface{}{}
 		
+		fmt.Printf("DEBUG: Building social settings - Mastodon: %v, Bluesky: %v\n", request.Mastodon, request.Bluesky)
+		
 		if request.Mastodon {
 			social["mastodon"] = map[string]interface{}{
 				"enabled": true,
@@ -74,6 +81,7 @@ func (a *App) UploadMultiplePhotos(request MultiPhotoUploadRequest) (*MultiPhoto
 		}
 		
 		jsonRequest["social"] = social
+		fmt.Printf("DEBUG: Social settings in JSON: %+v\n", social)
 	}
 	
 	// Process each image

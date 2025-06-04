@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	
 	"github.com/pdxmph/imgupv2/pkg/config"
@@ -96,19 +97,22 @@ func (api *FlickrAPI) GetPhotoInfo(ctx context.Context, photoID string) (*PhotoI
 
 // GetPhotoSizes gets available sizes for a photo
 func (api *FlickrAPI) GetPhotoSizes(ctx context.Context, photoID string) ([]PhotoSize, error) {
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: GetPhotoSizes called with photoID=%s\n", photoID)
+	}
+	
 	params := url.Values{
 		"method":         {"flickr.photos.getSizes"},
-		"api_key":        {api.ConsumerKey},
 		"photo_id":       {photoID},
 		"format":         {"json"},
 		"nojsoncallback": {"1"},
 	}
 	
-	resp, err := http.Get(flickrAPIURL + "?" + params.Encode())
+	// Use OAuth-signed request instead of plain GET
+	resp, err := api.makeAPICall(ctx, "GET", params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get photo sizes: %w", err)
 	}
-	defer resp.Body.Close()
 	
 	var result struct {
 		Sizes struct {
@@ -119,15 +123,20 @@ func (api *FlickrAPI) GetPhotoSizes(ctx context.Context, photoID string) ([]Phot
 				Source string `json:"source"`
 			} `json:"size"`
 		} `json:"sizes"`
-		Stat string `json:"stat"`
+		Stat    string `json:"stat"`
+		Code    int    `json:"code,omitempty"`
+		Message string `json:"message,omitempty"`
 	}
 	
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 	
 	if result.Stat != "ok" {
-		return nil, fmt.Errorf("API returned error")
+		if result.Message != "" {
+			return nil, fmt.Errorf("API error %d: %s", result.Code, result.Message)
+		}
+		return nil, fmt.Errorf("API returned error status: %s", result.Stat)
 	}
 	
 	var sizes []PhotoSize

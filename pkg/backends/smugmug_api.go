@@ -254,6 +254,10 @@ func (api *SmugMugAPI) GetAlbum(ctx context.Context, albumKey string) (*Album, e
 func (api *SmugMugAPI) GetImageSizes(ctx context.Context, imageURI string) (map[string]interface{}, error) {
 	// For AlbumImage URIs, we need to expand the Image to get sizes
 	// Try with Image expansion first
+	// Ensure imageURI starts with / for proper URL construction
+	if !strings.HasPrefix(imageURI, "/") {
+		imageURI = "/" + imageURI
+	}
 	endpoint := smugmugAPIURL + imageURI + "?_expand=Image.ImageSizes,ImageSizes,ArchivedUri,ImageDownloadUrl"
 	
 	// Create OAuth1 config and client
@@ -345,6 +349,10 @@ func (api *SmugMugAPI) GetImageSizes(ctx context.Context, imageURI string) (map[
 
 // GetImage gets details for a specific image
 func (api *SmugMugAPI) GetImage(ctx context.Context, imageURI string) (*Image, error) {
+	// Ensure imageURI starts with / for proper URL construction
+	if !strings.HasPrefix(imageURI, "/") {
+		imageURI = "/" + imageURI
+	}
 	endpoint := smugmugAPIURL + imageURI
 	
 	// Create OAuth1 config and client
@@ -388,6 +396,10 @@ func (api *SmugMugAPI) GetImage(ctx context.Context, imageURI string) (*Image, e
 
 // GetAlbumImage gets details for an image in album context
 func (api *SmugMugAPI) GetAlbumImage(ctx context.Context, albumImageURI string) (map[string]interface{}, error) {
+	// Ensure albumImageURI starts with / for proper URL construction
+	if !strings.HasPrefix(albumImageURI, "/") {
+		albumImageURI = "/" + albumImageURI
+	}
 	endpoint := smugmugAPIURL + albumImageURI
 	
 	// Create OAuth1 config and client

@@ -714,8 +714,12 @@ async function handleMultiPhotoUpload() {
     
     // Debug: Check form state
     console.log('DEBUG: Form disabled state:', form.classList.contains('disabled'));
+    console.log('DEBUG: Mastodon checkbox checked:', form['mastodon-enabled'].checked);
+    console.log('DEBUG: Bluesky checkbox checked:', form['bluesky-enabled'].checked);
     console.log('DEBUG: Mastodon text element:', document.getElementById('mastodon-text'));
     console.log('DEBUG: Mastodon text value directly:', document.getElementById('mastodon-text').value);
+    console.log('DEBUG: Bluesky text element:', document.getElementById('bluesky-text'));
+    console.log('DEBUG: Bluesky text value directly:', document.getElementById('bluesky-text').value);
     
     const socialPost = {
         mastodonEnabled: form['mastodon-enabled'].checked,
@@ -753,6 +757,9 @@ async function handleMultiPhotoUpload() {
         };
         
         console.log('Uploading multiple photos:', uploadData);
+        console.log('DEBUG: uploadData.bluesky =', uploadData.bluesky);
+        console.log('DEBUG: uploadData.mastodon =', uploadData.mastodon);
+        console.log('DEBUG: uploadData.post =', uploadData.post);
         
         // Call backend method
         const result = await window.go.main.App.UploadMultiplePhotos(uploadData);
