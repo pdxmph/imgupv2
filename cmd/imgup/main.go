@@ -654,6 +654,13 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 			photoURL = result.URL
 			imageURL = result.ImageURL
 			
+			// Print warnings to stderr unless in JSON mode
+			if len(result.Warnings) > 0 && outputFormat != "json" {
+				for _, warning := range result.Warnings {
+					fmt.Fprintf(os.Stderr, "Warning: %s\n", warning)
+				}
+			}
+			
 		case "smugmug":
 			uploader := backends.NewSmugMugUploader(
 				cfg.SmugMug.ConsumerKey,
@@ -1047,6 +1054,7 @@ func uploadSingleImage(ctx context.Context, cfg *config.Config, service string, 
 		result.URL = uploadResult.URL
 		result.ImageURL = uploadResult.ImageURL
 		result.PhotoID = uploadResult.PhotoID
+		result.Warnings = uploadResult.Warnings
 		
 	case "smugmug":
 		uploader := backends.NewSmugMugUploader(

@@ -59,12 +59,13 @@ type BatchUploadResponse struct {
 
 // UploadResult represents the result of a single image upload
 type UploadResult struct {
-	Path      string  `json:"path"`
-	URL       string  `json:"url,omitempty"`
-	ImageURL  string  `json:"imageUrl,omitempty"`
-	PhotoID   string  `json:"photoId,omitempty"`
-	Duplicate bool    `json:"duplicate"`
-	Error     *string `json:"error"`
+	Path      string   `json:"path"`
+	URL       string   `json:"url,omitempty"`
+	ImageURL  string   `json:"imageUrl,omitempty"`
+	PhotoID   string   `json:"photoId,omitempty"`
+	Duplicate bool     `json:"duplicate"`
+	Error     *string  `json:"error"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 // SocialPostResults contains results from social media posting

@@ -34,6 +34,7 @@ type UploadResult struct {
 	PhotoID  string
 	URL      string   // Photo page URL
 	ImageURL string   // Direct image URL for embedding
+	Warnings []string // Non-fatal warnings (e.g., failed to set tags)
 }
 
 // NewFlickrUploader creates a new Flickr uploader
@@ -52,11 +53,16 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 		fmt.Fprintf(os.Stderr, "DEBUG: Upload called with isPrivate=%v\n", isPrivate)
 	}
 	
+	result := &UploadResult{
+		Warnings: []string{},
+	}
+	
 	// Step 1: Upload the photo with NO metadata
 	photoID, err := u.uploadPhoto(ctx, imagePath)
 	if err != nil {
 		return nil, err
 	}
+	result.PhotoID = photoID
 	
 	// Step 2: Set metadata if provided
 	if title != "" || description != "" {
@@ -64,8 +70,8 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 			fmt.Fprintf(os.Stderr, "DEBUG: Setting photo metadata (title: %q, description: %q)\n", title, description)
 		}
 		if err := u.setPhotoMeta(ctx, photoID, title, description); err != nil {
-			// Log error but don't fail - photo is already uploaded
-			fmt.Fprintf(os.Stderr, "Warning: Failed to set photo metadata: %v\n", err)
+			// Collect warning instead of printing
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Failed to set photo metadata: %v", err))
 		} else if os.Getenv("IMGUP_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "DEBUG: Successfully set photo metadata\n")
 		}
@@ -77,8 +83,8 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 			fmt.Fprintf(os.Stderr, "DEBUG: Adding tags: %v\n", tags)
 		}
 		if err := u.addTags(ctx, photoID, tags); err != nil {
-			// Log error but don't fail - photo is already uploaded
-			fmt.Fprintf(os.Stderr, "Warning: Failed to add tags: %v\n", err)
+			// Collect warning instead of printing
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Failed to add tags: %v", err))
 		} else if os.Getenv("IMGUP_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "DEBUG: Successfully added tags\n")
 		}
@@ -90,8 +96,8 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 			fmt.Fprintf(os.Stderr, "DEBUG: Setting photo as private (photo_id: %s)\n", photoID)
 		}
 		if err := u.setPhotoPerms(ctx, photoID, false, false, false); err != nil {
-			// Log error but don't fail
-			fmt.Fprintf(os.Stderr, "Warning: Failed to set photo privacy: %v\n", err)
+			// Collect warning instead of printing
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Failed to set photo privacy: %v", err))
 		} else if os.Getenv("IMGUP_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "DEBUG: Successfully set photo as private\n")
 		}
@@ -102,11 +108,10 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 	photoInfo, err := api.GetPhotoInfo(ctx, photoID)
 	if err != nil {
 		// Fall back to basic URL if we can't get photo info
-		return &UploadResult{
-			PhotoID: photoID,
-			URL:     fmt.Sprintf("https://www.flickr.com/photos/98806759@N00/%s", photoID),
-		}, nil
+		result.URL = fmt.Sprintf("https://www.flickr.com/photos/98806759@N00/%s", photoID)
+		return result, nil
 	}
+	result.URL = photoInfo.URL
 	
 	// Get photo sizes to find a good image URL
 	sizes, err := api.GetPhotoSizes(ctx, photoID)
@@ -124,12 +129,9 @@ func (u *FlickrUploader) Upload(ctx context.Context, imagePath string, title, de
 			imageURL = sizes[len(sizes)-1].Source
 		}
 	}
+	result.ImageURL = imageURL
 	
-	return &UploadResult{
-		PhotoID:  photoID,
-		URL:      photoInfo.URL,
-		ImageURL: imageURL,
-	}, nil
+	return result, nil
 }
 
 // uploadPhoto uploads just the photo file without any metadata
@@ -374,7 +376,18 @@ func (u *FlickrUploader) makeAPICall(ctx context.Context, method string, params 
 	}
 	
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
+		// Check if response is HTML (common for 504 Gateway Timeout errors)
+		contentType := resp.Header.Get("Content-Type")
+		if strings.Contains(contentType, "text/html") || strings.HasPrefix(string(body), "<") {
+			// Sanitize HTML content in error message
+			return nil, fmt.Errorf("request failed with status %d (HTML response)", resp.StatusCode)
+		}
+		// For non-HTML errors, truncate body if too long
+		errorBody := string(body)
+		if len(errorBody) > 200 {
+			errorBody = errorBody[:200] + "..."
+		}
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errorBody)
 	}
 	
 	return body, nil

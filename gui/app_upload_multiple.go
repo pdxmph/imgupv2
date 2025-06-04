@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 	
@@ -217,12 +218,13 @@ func (a *App) UploadMultiplePhotos(request MultiPhotoUploadRequest) (*MultiPhoto
 	var jsonResponse struct {
 		Success bool `json:"success"`
 		Uploads []struct {
-			Path      string  `json:"path"`
-			URL       string  `json:"url"`
-			ImageURL  string  `json:"imageUrl"`
-			PhotoID   string  `json:"photoId"`
-			Duplicate bool    `json:"duplicate"`
-			Error     *string `json:"error"`
+			Path      string   `json:"path"`
+			URL       string   `json:"url"`
+			ImageURL  string   `json:"imageUrl"`
+			PhotoID   string   `json:"photoId"`
+			Duplicate bool     `json:"duplicate"`
+			Error     *string  `json:"error"`
+			Warnings  []string `json:"warnings"`
 		} `json:"uploads"`
 		Social *struct {
 			Mastodon *struct {
@@ -239,15 +241,34 @@ func (a *App) UploadMultiplePhotos(request MultiPhotoUploadRequest) (*MultiPhoto
 	}
 	
 	if err := json.Unmarshal([]byte(outputStr), &jsonResponse); err != nil {
-		// Try to find JSON in output
+		// Try to find JSON in output by looking for complete JSON objects
 		jsonStart := strings.Index(outputStr, "{")
 		jsonEnd := strings.LastIndex(outputStr, "}")
 		
 		if jsonStart >= 0 && jsonEnd >= jsonStart {
+			// Extract the JSON portion
 			jsonStr := outputStr[jsonStart : jsonEnd+1]
+			
+			// Try to parse the extracted JSON
 			if err := json.Unmarshal([]byte(jsonStr), &jsonResponse); err != nil {
+				// If that fails, try to at least extract successful uploads
+				// This handles cases where JSON is partially corrupted
 				result.Success = false
 				result.Error = fmt.Sprintf("Failed to parse JSON response: %v", err)
+				
+				// Try to extract URLs from the output as a fallback
+				urlPattern := `"url":\s*"([^"]+)"`
+				if matches := regexp.MustCompile(urlPattern).FindAllStringSubmatch(outputStr, -1); matches != nil {
+					for i, match := range matches {
+						if i < len(request.Images) && len(match) > 1 {
+							result.Outputs = append(result.Outputs, MultiPhotoOutputResult{
+								Path: request.Images[i].Path,
+								URL:  match[1],
+								Alt:  request.Images[i].Alt,
+							})
+						}
+					}
+				}
 				return result, nil
 			}
 		} else {
@@ -268,6 +289,7 @@ func (a *App) UploadMultiplePhotos(request MultiPhotoUploadRequest) (*MultiPhoto
 				URL:       upload.URL,
 				Alt:       request.Images[i].Alt,
 				Duplicate: upload.Duplicate, // Pass duplicate status to frontend
+				Warnings:  upload.Warnings,  // Pass warnings to frontend
 			}
 			
 			if upload.Error != nil {
