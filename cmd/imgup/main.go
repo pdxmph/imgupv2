@@ -632,20 +632,13 @@ func uploadCommand(cmd *cobra.Command, args []string) {
 		
 		switch service {
 		case "flickr":
-			// Add machine tag for duplicate detection if we have MD5
-			uploadTags := tags
-			if fileInfo != nil && fileInfo.MD5 != "" {
-				machineTag := fmt.Sprintf("imgupv2:checksum=%s", fileInfo.MD5)
-				uploadTags = append(uploadTags, machineTag)
-			}
-			
 			uploader := backends.NewFlickrUploader(
 				cfg.Flickr.ConsumerKey,
 				cfg.Flickr.ConsumerSecret,
 				cfg.Flickr.AccessToken,
 				cfg.Flickr.AccessSecret,
 			)
-			result, err := uploader.Upload(ctx, imagePath, title, description, uploadTags, isPrivate)
+			result, err := uploader.Upload(ctx, imagePath, title, description, tags, isPrivate)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Upload failed: %v\n", err)
 				os.Exit(1)
@@ -1031,12 +1024,6 @@ func uploadSingleImage(ctx context.Context, cfg *config.Config, service string, 
 	// Perform upload based on service
 	switch service {
 	case "flickr":
-		// Add machine tag for duplicate detection
-		if fileInfo != nil && fileInfo.MD5 != "" {
-			machineTag := fmt.Sprintf("imgupv2:checksum=%s", fileInfo.MD5)
-			tags = append(tags, machineTag)
-		}
-		
 		uploader := backends.NewFlickrUploader(
 			cfg.Flickr.ConsumerKey,
 			cfg.Flickr.ConsumerSecret,

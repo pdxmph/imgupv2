@@ -47,7 +47,7 @@ and presents them for selection.`,
 
 	// Add pull flags
 	pullCmd.Flags().StringVar(&pullService, "service", "", "Source service: smugmug, flickr (uses default if not set)")
-	pullCmd.Flags().StringVar(&pullAlbum, "album", "", "Album name (default: configured album or 'Sharing')")
+	pullCmd.Flags().StringVar(&pullAlbum, "album", "", "Album name (SmugMug default: 'Sharing', Flickr default: photostream)")
 	pullCmd.Flags().StringVar(&pullFormat, "format", "social", "Output format: social, markdown, html, json")
 	pullCmd.Flags().StringVar(&pullSize, "size", "", "Image size: large, medium, small (default: auto based on format)")
 	pullCmd.Flags().BoolVar(&pullJSON, "json", false, "Output JSON without interactive selection")
@@ -99,14 +99,14 @@ func pullCommand(cmd *cobra.Command, args []string) {
 		case "smugmug":
 			if cfg.SmugMug.PullAlbum != "" {
 				album = cfg.SmugMug.PullAlbum
+			} else {
+				album = "Sharing" // SmugMug default
 			}
 		case "flickr":
 			if cfg.Flickr.PullAlbum != "" {
 				album = cfg.Flickr.PullAlbum
 			}
-		}
-		if album == "" {
-			album = "Sharing" // default
+			// For Flickr, empty album means photostream (not "Sharing")
 		}
 	}
 
@@ -124,7 +124,11 @@ func pullCommand(cmd *cobra.Command, args []string) {
 	}
 
 	if !pullJSON {
-		fmt.Printf("Fetching from %s (album: %s)...\n\n", strings.Title(service), album)
+		if service == "flickr" && album == "" {
+			fmt.Printf("Fetching from %s photostream...\n\n", strings.Title(service))
+		} else {
+			fmt.Printf("Fetching from %s (album: %s)...\n\n", strings.Title(service), album)
+		}
 	}
 
 	// Fetch images from service
@@ -192,8 +196,13 @@ func fetchImages(service, album string, count int) ([]types.PullImage, error) {
 		return client.PullImages(ctx, album, count)
 
 	case "flickr":
-		// TODO: Implement Flickr pull client
-		return nil, fmt.Errorf("Flickr pull not yet implemented")
+		// Check if Flickr is configured
+		if cfg.Flickr.AccessToken == "" {
+			return nil, fmt.Errorf("Flickr not authenticated. Run: imgup auth flickr")
+		}
+		
+		client := backends.NewFlickrPullClient(&cfg.Flickr)
+		return client.PullImages(ctx, album, count)
 
 	default:
 		return nil, fmt.Errorf("unsupported service: %s", service)
@@ -402,11 +411,14 @@ func processPullRequest(pullReq *types.PullRequest) {
 		}
 	}
 
-	// Collect all tags from selected images
+	// Collect all tags from selected images, filtering out imgupv2 machine tags
 	allTags := make(map[string]bool)
 	for _, img := range pullReq.Images {
 		for _, tag := range img.Tags {
-			allTags[tag] = true
+			// Skip imgupv2 machine tags
+			if !strings.HasPrefix(tag, "imgupv2:") {
+				allTags[tag] = true
+			}
 		}
 	}
 	var uniqueTags []string
