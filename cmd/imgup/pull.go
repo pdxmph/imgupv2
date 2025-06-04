@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/pdxmph/imgupv2/pkg/backends"
 	"github.com/pdxmph/imgupv2/pkg/config"
 	"github.com/pdxmph/imgupv2/pkg/types"
 )
@@ -113,8 +115,17 @@ func pullCommand(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("Fetching from %s (album: %s)...\n\n", strings.Title(service), album)
 
-	// TODO: Fetch images from service
-	images := fetchImages(service, album, count)
+	// Fetch images from service
+	images, err := fetchImages(service, album, count)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to fetch images: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(images) == 0 {
+		fmt.Println("No images found in the specified album.")
+		return
+	}
 
 	if pullJSON {
 		// Output JSON directly without selection
@@ -144,34 +155,31 @@ func pullCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
-func fetchImages(service, album string, count int) []types.PullImage {
-	// TODO: Implement actual fetching from services
-	// For now, return mock data
-	return []types.PullImage{
-		{
-			ID:          "1",
-			Title:       "Sunset over beach",
-			Description: "Golden hour at Cannon Beach",
-			SourceURL:   "https://photos.example.com/sunset",
-			Sizes: types.ImageSizes{
-				Large:  "https://photos.example.com/sunset/large.jpg",
-				Medium: "https://photos.example.com/sunset/medium.jpg",
-				Small:  "https://photos.example.com/sunset/small.jpg",
-				Thumb:  "https://photos.example.com/sunset/thumb.jpg",
-			},
-		},
-		{
-			ID:          "2",
-			Title:       "Haystack Rock",
-			Description: "Low tide reveals tide pools",
-			SourceURL:   "https://photos.example.com/haystack",
-			Sizes: types.ImageSizes{
-				Large:  "https://photos.example.com/haystack/large.jpg",
-				Medium: "https://photos.example.com/haystack/medium.jpg",
-				Small:  "https://photos.example.com/haystack/small.jpg",
-				Thumb:  "https://photos.example.com/haystack/thumb.jpg",
-			},
-		},
+func fetchImages(service, album string, count int) ([]types.PullImage, error) {
+	ctx := context.Background()
+	
+	// Load config to get credentials
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	switch service {
+	case "smugmug":
+		// Check if SmugMug is configured
+		if cfg.SmugMug.AccessToken == "" {
+			return nil, fmt.Errorf("SmugMug not authenticated. Run: imgup auth smugmug")
+		}
+
+		client := backends.NewSmugMugPullClient(&cfg.SmugMug)
+		return client.PullImages(ctx, album, count)
+
+	case "flickr":
+		// TODO: Implement Flickr pull client
+		return nil, fmt.Errorf("Flickr pull not yet implemented")
+
+	default:
+		return nil, fmt.Errorf("unsupported service: %s", service)
 	}
 }
 
