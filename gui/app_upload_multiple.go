@@ -45,11 +45,7 @@ func (a *App) UploadMultiplePhotos(request MultiPhotoUploadRequest) (*MultiPhoto
 		"images": []map[string]interface{}{},
 	}
 	
-	// Add options to force upload (bypass duplicate detection)
-	// This helps avoid issues with stale cached URLs
-	jsonRequest["options"] = map[string]interface{}{
-		"force": true,
-	}
+	// Note: Force flag removed - now using reactive 404 handling in CLI
 	
 	// Common settings
 	if len(request.Tags) > 0 {
