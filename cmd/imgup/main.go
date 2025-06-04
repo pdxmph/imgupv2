@@ -919,7 +919,6 @@ func handleJSONUpload(cmd *cobra.Command) error {
 				ImageURL: result.ImageURL,
 				PhotoID:  result.PhotoID,
 				Alt:      img.Alt,
-				Path:     img.Path,
 			})
 		} else {
 			response.Success = false
@@ -932,7 +931,7 @@ func handleJSONUpload(cmd *cobra.Command) error {
 		
 		// Post to Mastodon
 		if request.Social.Mastodon != nil && request.Social.Mastodon.Enabled {
-			mastodonResult := postToMastodonBatch(cfg, service, uploadedImages, request.Social.Mastodon)
+			mastodonResult := postToMastodonBatch(cfg, uploadedImages, request.Social.Mastodon)
 			response.Social.Mastodon = &mastodonResult
 		}
 		
@@ -959,7 +958,6 @@ type uploadedImage struct {
 	ImageURL string
 	PhotoID  string
 	Alt      string
-	Path     string // Original file path for re-upload if needed
 }
 
 // determineService figures out which service to use based on config and request
@@ -1133,47 +1131,8 @@ func recordUploadInCache(service, imagePath, photoID, photoURL, imageURL string,
 	cache.Record(upload)
 }
 
-// isStaleURLError checks if the error indicates a stale cached URL (404 or similar)
-func isStaleURLError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "received HTML/text response instead of image") ||
-		strings.Contains(errStr, "404") ||
-		strings.Contains(errStr, "not found")
-}
-
-// reuploadImage forces a fresh upload of an image, bypassing cache
-func reuploadImage(ctx context.Context, cfg *config.Config, service string, imagePath string, imageAlt string) (*uploadedImage, error) {
-	// Create a minimal image upload request
-	img := types.ImageUpload{
-		Path: imagePath,
-		Alt:  imageAlt,
-	}
-	
-	// Force upload by temporarily setting force flag
-	originalForce := force
-	force = true
-	defer func() { force = originalForce }()
-	
-	// Upload the image
-	result := uploadSingleImage(ctx, cfg, service, img, nil)
-	
-	if result.Error != nil {
-		return nil, fmt.Errorf("reupload failed: %s", *result.Error)
-	}
-	
-	return &uploadedImage{
-		URL:      result.URL,
-		ImageURL: result.ImageURL,
-		PhotoID:  result.PhotoID,
-		Alt:      imageAlt,
-	}, nil
-}
-
 // postToMastodonBatch posts multiple images to Mastodon
-func postToMastodonBatch(cfg *config.Config, service string, images []uploadedImage, settings *types.MastodonSettings) types.SocialPostResult {
+func postToMastodonBatch(cfg *config.Config, images []uploadedImage, settings *types.MastodonSettings) types.SocialPostResult {
 	result := types.SocialPostResult{}
 	
 	// Check if Mastodon is configured
@@ -1193,9 +1152,7 @@ func postToMastodonBatch(cfg *config.Config, service string, images []uploadedIm
 	
 	// Upload all images to Mastodon and collect media IDs
 	var mediaIDs []string
-	ctx := context.Background()
-	
-	for i, img := range images {
+	for _, img := range images {
 		// Get image URL for social posting
 		imageURL := img.ImageURL
 		if imageURL == "" {
@@ -1206,37 +1163,9 @@ func postToMastodonBatch(cfg *config.Config, service string, images []uploadedIm
 		
 		mediaID, err := client.UploadMediaFromURL(imageURL, img.Alt)
 		if err != nil {
-			// Check if this is a stale URL error
-			if isStaleURLError(err) {
-				fmt.Fprintf(os.Stderr, "DEBUG: Detected stale URL for %s, re-uploading...\n", imageURL)
-				
-				// Re-upload the image
-				freshImage, reuploadErr := reuploadImage(ctx, cfg, service, img.Path, img.Alt)
-				if reuploadErr != nil {
-					errStr := fmt.Sprintf("failed to re-upload after stale URL: %v (original error: %v)", reuploadErr, err)
-					result.Error = &errStr
-					return result
-				}
-				
-				// Update the image in our array for future reference
-				images[i].URL = freshImage.URL
-				images[i].ImageURL = freshImage.ImageURL
-				images[i].PhotoID = freshImage.PhotoID
-				
-				// Try uploading to Mastodon again with the fresh URL
-				mediaID, err = client.UploadMediaFromURL(freshImage.ImageURL, img.Alt)
-				if err != nil {
-					errStr := fmt.Sprintf("failed to upload media after re-upload: %v", err)
-					result.Error = &errStr
-					return result
-				}
-				
-				fmt.Fprintf(os.Stderr, "DEBUG: Successfully re-uploaded and posted to Mastodon\n")
-			} else {
-				errStr := fmt.Sprintf("failed to upload media: %v", err)
-				result.Error = &errStr
-				return result
-			}
+			errStr := fmt.Sprintf("failed to upload media: %v", err)
+			result.Error = &errStr
+			return result
 		}
 		mediaIDs = append(mediaIDs, mediaID)
 	}

@@ -211,7 +211,8 @@ imgup config show
 imgupv2 includes an experimental duplicate detection feature that can prevent re-uploading images you've already uploaded. This feature is **OFF by default** due to potential issues.
 
 ### Known Issues
-- You can use it to get snippets and links back quickly if you've already uploaded an image, but it breaks with social posting.
+- You can use it to get snippets and links back quickly if you've already uploaded an image, but it breaks with social posting if you've deleted the photo from the service
+- **Deleted photos remain in cache** - If you delete photos from Flickr/SmugMug, the cache still references them. Clear the cache or use `--force` flag
 - May incorrectly identify your images as duplicates of other users' photos if not properly configured
 - Requires re-authentication after enabling to fetch your user ID
 - Cache database can become corrupted
@@ -260,6 +261,8 @@ If you experience issues:
    ```bash
    imgup upload --force photo.jpg
    ```
+
+5. **If it's too much overhead, leave it disabled** - imgupv2 is designed as a "fire and forget" uploader, not a photo manager
 
 ## Troubleshooting
 
