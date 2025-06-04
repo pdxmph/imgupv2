@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/pdxmph/imgupv2/pkg/backends"
 	"github.com/pdxmph/imgupv2/pkg/config"
+	"github.com/pdxmph/imgupv2/pkg/services/mastodon"
+	"github.com/pdxmph/imgupv2/pkg/services/bluesky"
 	"github.com/pdxmph/imgupv2/pkg/types"
 )
 
@@ -25,6 +27,10 @@ var (
 	pullJSON    bool
 	pullGUI     bool
 	pullDryRun  bool
+	pullMastodon bool
+	pullBluesky  bool
+	pullVisibility string
+	pullPost    string
 )
 
 // createPullCommand creates the pull command
@@ -47,6 +53,10 @@ and presents them for selection.`,
 	pullCmd.Flags().BoolVar(&pullJSON, "json", false, "Output JSON without interactive selection")
 	pullCmd.Flags().BoolVar(&pullGUI, "gui", false, "Open GUI instead of $EDITOR")
 	pullCmd.Flags().BoolVar(&pullDryRun, "dry-run", false, "Show what would be posted without posting")
+	pullCmd.Flags().BoolVar(&pullMastodon, "mastodon", false, "Post to Mastodon")
+	pullCmd.Flags().BoolVar(&pullBluesky, "bluesky", false, "Post to Bluesky")
+	pullCmd.Flags().StringVar(&pullVisibility, "visibility", "public", "Mastodon visibility: public, unlisted, private (followers), direct")
+	pullCmd.Flags().StringVar(&pullPost, "post", "", "Social media post text (skips editor if provided)")
 
 	return pullCmd
 }
@@ -113,7 +123,9 @@ func pullCommand(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	fmt.Printf("Fetching from %s (album: %s)...\n\n", strings.Title(service), album)
+	if !pullJSON {
+		fmt.Printf("Fetching from %s (album: %s)...\n\n", strings.Title(service), album)
+	}
 
 	// Fetch images from service
 	images, err := fetchImages(service, album, count)
@@ -150,8 +162,13 @@ func pullCommand(cmd *cobra.Command, args []string) {
 		// TODO: Pipe to GUI
 		fmt.Println("GUI integration not yet implemented")
 	} else {
-		// Open in editor
-		editPullRequest(pullReq)
+		// If post text provided via flag, skip editor
+		if pullPost != "" {
+			processPullRequest(pullReq)
+		} else {
+			// Open in editor
+			editPullRequest(pullReq)
+		}
 	}
 }
 
@@ -228,8 +245,16 @@ func createPullRequest(images []types.PullImage, service, album string) *types.P
 	// Reset IDs to sequential numbers for cleaner JSON
 	for i := range images {
 		images[i].ID = strconv.Itoa(i + 1)
-		images[i].Post = ""  // User will fill this
 		images[i].Alt = ""   // User can add
+	}
+
+	// Build targets based on flags
+	var targets []string
+	if pullMastodon {
+		targets = append(targets, "mastodon")
+	}
+	if pullBluesky {
+		targets = append(targets, "bluesky")
 	}
 
 	return &types.PullRequest{
@@ -237,9 +262,10 @@ func createPullRequest(images []types.PullImage, service, album string) *types.P
 			Service: service,
 			Album:   album,
 		},
+		Post:       pullPost,  // Use the flag value if provided
 		Images:     images,
-		Targets:    []string{"mastodon", "bluesky"},
-		Visibility: "public",
+		Targets:    targets,
+		Visibility: pullVisibility,
 		Format:     pullFormat,
 	}
 }
@@ -273,6 +299,11 @@ func editPullRequest(pullReq *types.PullRequest) {
 	}
 	tmpfile.Close()
 
+	// Give user instructions
+	fmt.Println("\nOpening editor. Fill in the 'post' field at the top for your social media text.")
+	fmt.Println("Example: \"post\": \"Check out these photos from the show!\"")
+	fmt.Println("You can also edit 'alt' text for individual images.\n")
+
 	// Get editor
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
@@ -304,14 +335,242 @@ func editPullRequest(pullReq *types.PullRequest) {
 		os.Exit(1)
 	}
 
-	// TODO: Process the edited request (post to social media, generate output, etc.)
-	fmt.Println("\nEdited JSON received. Processing not yet implemented.")
-	
-	// For now, just output what we would do
+	// Debug output in dry-run mode
 	if pullDryRun {
-		fmt.Println("\n[DRY RUN] Would process:")
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		encoder.Encode(editedReq)
+		fmt.Println("\n[DRY RUN] Parsed JSON successfully")
+		fmt.Printf("Post text: %q\n", editedReq.Post)
+		fmt.Printf("Images selected: %d\n", len(editedReq.Images))
+		for i, img := range editedReq.Images {
+			fmt.Printf("  %d. %s\n", i+1, img.Title)
+		}
+		fmt.Println()
 	}
+
+	// Process the edited request
+	processPullRequest(&editedReq)
+}
+
+func processPullRequest(pullReq *types.PullRequest) {
+	// Check if post text exists
+	if pullReq.Post == "" {
+		fmt.Println("No post text provided. Use the 'post' field at the top of the JSON or --post flag.")
+		return
+	}
+
+	if len(pullReq.Images) == 0 {
+		fmt.Println("No images selected.")
+		return
+	}
+
+	fmt.Printf("Posting %d images with text: %q\n\n", len(pullReq.Images), pullReq.Post)
+	// Load config for social media credentials
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize social media clients if needed
+	var mastodonClient *mastodon.Client
+	var blueskyClient *bluesky.Client
+
+	if contains(pullReq.Targets, "mastodon") && cfg.Mastodon.AccessToken != "" {
+		mastodonClient = mastodon.NewClient(
+			cfg.Mastodon.InstanceURL,
+			cfg.Mastodon.ClientID,
+			cfg.Mastodon.ClientSecret,
+			cfg.Mastodon.AccessToken,
+		)
+	}
+
+	if contains(pullReq.Targets, "bluesky") && cfg.Bluesky.AppPassword != "" {
+		blueskyClient = bluesky.NewClient(
+			"", // Uses default bsky.social
+			cfg.Bluesky.Handle,
+			cfg.Bluesky.AppPassword,
+		)
+		if err := blueskyClient.Authenticate(); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to authenticate with Bluesky: %v\n", err)
+			if !pullDryRun {
+				os.Exit(1)
+			}
+		}
+	}
+
+	// Collect all tags from selected images
+	allTags := make(map[string]bool)
+	for _, img := range pullReq.Images {
+		for _, tag := range img.Tags {
+			allTags[tag] = true
+		}
+	}
+	var uniqueTags []string
+	for tag := range allTags {
+		uniqueTags = append(uniqueTags, tag)
+	}
+
+	// Build post text with tags
+	postText := pullReq.Post
+
+	if pullDryRun {
+		fmt.Printf("[DRY RUN] Would post to: %v\n", pullReq.Targets)
+		fmt.Printf("  Text: %s\n", postText)
+		fmt.Printf("  Images: %d\n", len(pullReq.Images))
+		for i, img := range pullReq.Images {
+			imageURL := selectImageSize(img.Sizes, pullSize)
+			fmt.Printf("    %d. %s (%s)\n", i+1, img.Title, imageURL)
+			if img.Alt != "" {
+				fmt.Printf("       Alt: %s\n", img.Alt)
+			}
+		}
+		fmt.Printf("  Tags: %v\n", uniqueTags)
+		fmt.Printf("  Visibility: %s\n", pullReq.Visibility)
+		return
+	}
+
+	// Upload all images and collect media IDs/blobs
+	var mastodonMediaIDs []string
+	var blueskyBlobs []bluesky.BlobResponse
+	var blueskyAltTexts []string
+
+	if mastodonClient != nil && contains(pullReq.Targets, "mastodon") {
+		fmt.Println("Uploading images to Mastodon...")
+		for _, img := range pullReq.Images {
+			imageURL := selectImageSize(img.Sizes, pullSize)
+			fmt.Printf("  Uploading %s...", img.Title)
+			mediaID, err := mastodonClient.UploadMediaFromURL(imageURL, img.Alt)
+			if err != nil {
+				fmt.Printf(" failed: %v\n", err)
+				continue
+			}
+			mastodonMediaIDs = append(mastodonMediaIDs, mediaID)
+			fmt.Printf(" done\n")
+		}
+	}
+
+	if blueskyClient != nil && contains(pullReq.Targets, "bluesky") {
+		fmt.Println("Uploading images to Bluesky...")
+		for _, img := range pullReq.Images {
+			imageURL := selectImageSize(img.Sizes, pullSize)
+			fmt.Printf("  Uploading %s...", img.Title)
+			blob, altText, err := blueskyClient.UploadMediaFromURL(imageURL, img.Alt)
+			if err != nil {
+				fmt.Printf(" failed: %v\n", err)
+				continue
+			}
+			blueskyBlobs = append(blueskyBlobs, *blob)
+			blueskyAltTexts = append(blueskyAltTexts, altText)
+			fmt.Printf(" done\n")
+		}
+	}
+
+	// Post to social media platforms
+	posted := false
+
+	if mastodonClient != nil && contains(pullReq.Targets, "mastodon") && len(mastodonMediaIDs) > 0 {
+		fmt.Printf("\nPosting to Mastodon...")
+		visibility := pullReq.Visibility
+		if visibility == "" {
+			visibility = "public"
+		}
+		err = mastodonClient.PostStatus(postText, mastodonMediaIDs, visibility, uniqueTags)
+		if err != nil {
+			fmt.Printf(" failed: %v\n", err)
+		} else {
+			fmt.Printf(" done\n")
+			posted = true
+		}
+	}
+
+	if blueskyClient != nil && contains(pullReq.Targets, "bluesky") && len(blueskyBlobs) > 0 {
+		fmt.Printf("Posting to Bluesky...")
+		err = blueskyClient.PostStatus(postText, blueskyBlobs, blueskyAltTexts, uniqueTags)
+		if err != nil {
+			fmt.Printf(" failed: %v\n", err)
+		} else {
+			fmt.Printf(" done\n")
+			posted = true
+		}
+	}
+
+	// Generate output based on format
+	if posted && pullReq.Format != "social" {
+		fmt.Println("\nOutput:")
+		for _, img := range pullReq.Images {
+			imageURL := selectImageSize(img.Sizes, pullSize)
+			output := generateOutput(img, pullReq.Format, imageURL)
+			if output != "" {
+				fmt.Println(output)
+			}
+		}
+	}
+
+	if posted {
+		fmt.Printf("\nSuccessfully posted %d images\n", len(pullReq.Images))
+	} else {
+		fmt.Println("\nNo posts were made")
+	}
+}
+
+func selectImageSize(sizes types.ImageSizes, requestedSize string) string {
+	switch requestedSize {
+	case "small":
+		if sizes.Small != "" {
+			return sizes.Small
+		}
+		fallthrough
+	case "medium":
+		if sizes.Medium != "" {
+			return sizes.Medium
+		}
+		fallthrough
+	case "large":
+		if sizes.Large != "" {
+			return sizes.Large
+		}
+		fallthrough
+	default:
+		// Return first available size
+		if sizes.Large != "" {
+			return sizes.Large
+		}
+		if sizes.Medium != "" {
+			return sizes.Medium
+		}
+		if sizes.Small != "" {
+			return sizes.Small
+		}
+		return sizes.Thumb
+	}
+}
+
+func generateOutput(img types.PullImage, format string, imageURL string) string {
+	switch format {
+	case "url":
+		return img.SourceURL
+	case "markdown":
+		if img.Alt != "" {
+			return fmt.Sprintf("![%s](%s)", img.Alt, imageURL)
+		}
+		return fmt.Sprintf("![%s](%s)", img.Title, imageURL)
+	case "html":
+		if img.Alt != "" {
+			return fmt.Sprintf(`<img src="%s" alt="%s">`, imageURL, img.Alt)
+		}
+		return fmt.Sprintf(`<img src="%s" alt="%s">`, imageURL, img.Title)
+	case "social":
+		// For social format, we've already posted, so return empty
+		return ""
+	default:
+		return img.SourceURL
+	}
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }

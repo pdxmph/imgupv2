@@ -84,8 +84,9 @@ type SocialPostResult struct {
 // PullRequest represents the JSON format for pull operations
 type PullRequest struct {
 	Source  PullSource    `json:"source"`
+	Post    string        `json:"post"`                    // Single post text for all images
 	Images  []PullImage   `json:"images"`
-	Targets []string      `json:"targets,omitempty"`      // ["mastodon", "bluesky"]
+	Targets []string      `json:"targets,omitempty"`       // ["mastodon", "bluesky"]
 	Visibility string     `json:"visibility,omitempty"`    // for mastodon
 	Format  string        `json:"format,omitempty"`        // output format: social, markdown, html
 }
@@ -103,8 +104,7 @@ type PullImage struct {
 	Description string      `json:"description,omitempty"`
 	SourceURL   string      `json:"source_url"`             // original photo page
 	Sizes       ImageSizes  `json:"sizes"`
-	Post        string      `json:"post,omitempty"`         // social media post text
-	Alt         string      `json:"alt,omitempty"`          // alt text
+	Alt         string      `json:"alt"`                    // alt text
 	Tags        []string    `json:"tags,omitempty"`         // from source service
 }
 
