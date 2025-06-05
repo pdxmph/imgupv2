@@ -1605,8 +1605,8 @@ func (a *App) PostPullSelection(request types.PullRequest) (*MultiPhotoUploadRes
 		
 		if target == "bluesky" && blueskyClient == nil {
 			blueskyClient = bluesky.NewClient(
-				cfg.Bluesky.Handle,
 				"", // Uses default bsky.social
+				cfg.Bluesky.Handle,
 				cfg.Bluesky.AppPassword,
 			)
 			if err := blueskyClient.Authenticate(); err != nil {
