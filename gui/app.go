@@ -1654,7 +1654,13 @@ func (a *App) PostPullSelection(request types.PullRequest) (*MultiPhotoUploadRes
 		fmt.Println("Uploading to Mastodon...")
 		for _, img := range request.Images {
 			imageURL := selectImageSize(img.Sizes, "")
-			fmt.Printf("  Uploading %s...", img.Title)
+			fmt.Printf("  Uploading %s (URL: %s)...", img.Title, imageURL)
+			if imageURL == "" {
+				fmt.Printf(" skipped: no image URL available\n")
+				fmt.Printf("    Available sizes: Large=%s, Medium=%s, Small=%s, Thumb=%s\n", 
+					img.Sizes.Large, img.Sizes.Medium, img.Sizes.Small, img.Sizes.Thumb)
+				continue
+			}
 			mediaID, err := mastodonClient.UploadMediaFromURL(imageURL, img.Alt)
 			if err != nil {
 				fmt.Printf(" failed: %v\n", err)

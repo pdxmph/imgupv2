@@ -198,11 +198,27 @@ func (c *SmugMugPullClient) getImageSizes(ctx context.Context, imageKey string) 
 	// Map SmugMug sizes to our standard sizes
 	sizes := types.ImageSizes{}
 	
+	// Debug: Print available sizes
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Available image sizes:\n")
+		for key := range imageSizeDetails {
+			fmt.Fprintf(os.Stderr, "  - %s\n", key)
+		}
+	}
+	
 	// Helper function to extract URL from size data
 	extractURL := func(sizeName string) string {
 		if sizeData, ok := imageSizeDetails[sizeName].(map[string]interface{}); ok {
 			if urlStr, ok := sizeData["Url"].(string); ok {
 				return urlStr
+			}
+			// Debug: Show what's in the size data
+			if os.Getenv("IMGUP_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "DEBUG: Size %s exists but no URL found. Keys: ", sizeName)
+				for k := range sizeData {
+					fmt.Fprintf(os.Stderr, "%s ", k)
+				}
+				fmt.Fprintf(os.Stderr, "\n")
 			}
 		}
 		return ""
