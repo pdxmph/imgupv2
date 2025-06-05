@@ -15,7 +15,10 @@ import (
 	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/pdxmph/imgupv2/pkg/config"
 	"github.com/pdxmph/imgupv2/pkg/duplicate"
+	"github.com/pdxmph/imgupv2/pkg/services/bluesky"
+	"github.com/pdxmph/imgupv2/pkg/services/mastodon"
 	"github.com/pdxmph/imgupv2/pkg/thumbnail"
 	"github.com/pdxmph/imgupv2/pkg/types"
 )
@@ -1553,10 +1556,205 @@ func (a *App) PostPullSelection(request types.PullRequest) (*MultiPhotoUploadRes
 		}, nil
 	}
 	
-	// For now, return a more helpful error message
-	// The pull command needs to be enhanced to support posting pre-selected images
+	// Load config for social media credentials
+	cfg, err := config.Load()
+	if err != nil {
+		return &MultiPhotoUploadResult{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to load config: %v", err),
+		}, nil
+	}
+	
+	// Initialize social media clients if needed
+	var mastodonClient *mastodon.Client
+	var blueskyClient *bluesky.Client
+	
+	for _, target := range request.Targets {
+		if target == "mastodon" && mastodonClient == nil {
+			mastodonClient = mastodon.NewClient(
+				cfg.Mastodon.InstanceURL,
+				cfg.Mastodon.ClientID,
+				cfg.Mastodon.ClientSecret,
+				cfg.Mastodon.AccessToken,
+			)
+		}
+		
+		if target == "bluesky" && blueskyClient == nil {
+			blueskyClient = bluesky.NewClient(
+				cfg.Bluesky.Handle,
+				"", // Uses default bsky.social
+				cfg.Bluesky.AppPassword,
+			)
+			if err := blueskyClient.Authenticate(); err != nil {
+				return &MultiPhotoUploadResult{
+					Success: false,
+					Error:   fmt.Sprintf("Bluesky authentication failed: %v", err),
+				}, nil
+			}
+		}
+	}
+	
+	// Helper function to select image size
+	selectImageSize := func(sizes types.ImageSizes, preferredSize string) string {
+		// Default size selection based on format
+		if preferredSize == "" {
+			preferredSize = "large"
+		}
+		
+		switch preferredSize {
+		case "small":
+			if sizes.Small != "" {
+				return sizes.Small
+			}
+		case "medium":
+			if sizes.Medium != "" {
+				return sizes.Medium
+			}
+		}
+		
+		// Default to large, fallback to medium, then small
+		if sizes.Large != "" {
+			return sizes.Large
+		}
+		if sizes.Medium != "" {
+			return sizes.Medium
+		}
+		return sizes.Small
+	}
+	
+	// Helper function to check if slice contains string
+	contains := func(slice []string, str string) bool {
+		for _, v := range slice {
+			if v == str {
+				return true
+			}
+		}
+		return false
+	}
+	
+	// Upload all images and collect media IDs/blobs
+	var mastodonMediaIDs []string
+	var blueskyBlobs []bluesky.BlobResponse
+	var blueskyAltTexts []string
+	
+	// Upload to Mastodon if needed
+	if mastodonClient != nil && contains(request.Targets, "mastodon") {
+		fmt.Println("Uploading to Mastodon...")
+		for _, img := range request.Images {
+			imageURL := selectImageSize(img.Sizes, "")
+			fmt.Printf("  Uploading %s...", img.Title)
+			mediaID, err := mastodonClient.UploadMediaFromURL(imageURL, img.Alt)
+			if err != nil {
+				fmt.Printf(" failed: %v\n", err)
+				continue
+			}
+			mastodonMediaIDs = append(mastodonMediaIDs, mediaID)
+			fmt.Printf(" done\n")
+		}
+	}
+	
+	// Upload to Bluesky if needed
+	if blueskyClient != nil && contains(request.Targets, "bluesky") {
+		fmt.Println("Uploading to Bluesky...")
+		for _, img := range request.Images {
+			imageURL := selectImageSize(img.Sizes, "")
+			fmt.Printf("  Uploading %s...", img.Title)
+			blob, altText, err := blueskyClient.UploadMediaFromURL(imageURL, img.Alt)
+			if err != nil {
+				fmt.Printf(" failed: %v\n", err)
+				continue
+			}
+			blueskyBlobs = append(blueskyBlobs, *blob)
+			blueskyAltTexts = append(blueskyAltTexts, altText)
+			fmt.Printf(" done\n")
+		}
+	}
+	
+	// Collect all tags from selected images
+	allTags := make(map[string]bool)
+	for _, img := range request.Images {
+		for _, tag := range img.Tags {
+			allTags[tag] = true
+		}
+	}
+	var uniqueTags []string
+	for tag := range allTags {
+		uniqueTags = append(uniqueTags, tag)
+	}
+	
+	// Post to social media platforms
+	posted := false
+	var errors []string
+	socialStatus := ""
+	
+	// Post to Mastodon
+	if mastodonClient != nil && len(mastodonMediaIDs) > 0 {
+		fmt.Print("Posting to Mastodon...")
+		visibility := request.Visibility
+		if visibility == "" {
+			visibility = "public"
+		}
+		err := mastodonClient.PostStatus(request.Post, mastodonMediaIDs, visibility, uniqueTags)
+		if err != nil {
+			errMsg := fmt.Sprintf("Mastodon failed: %v", err)
+			fmt.Printf(" %s\n", errMsg)
+			errors = append(errors, errMsg)
+			if socialStatus == "" {
+				socialStatus = "mastodon_failed"
+			}
+		} else {
+			fmt.Printf(" done\n")
+			posted = true
+			if socialStatus == "" {
+				socialStatus = "mastodon_success"
+			}
+		}
+	}
+	
+	// Post to Bluesky
+	if blueskyClient != nil && len(blueskyBlobs) > 0 {
+		fmt.Print("Posting to Bluesky...")
+		err := blueskyClient.PostStatus(request.Post, blueskyBlobs, blueskyAltTexts, uniqueTags)
+		if err != nil {
+			errMsg := fmt.Sprintf("Bluesky failed: %v", err)
+			fmt.Printf(" %s\n", errMsg)
+			errors = append(errors, errMsg)
+			if socialStatus == "mastodon_success" {
+				socialStatus = "mastodon_success_bluesky_failed"
+			} else if socialStatus == "mastodon_failed" {
+				socialStatus = "both_failed"
+			} else {
+				socialStatus = "bluesky_failed"
+			}
+		} else {
+			fmt.Printf(" done\n")
+			posted = true
+			if socialStatus == "mastodon_success" {
+				socialStatus = "both_success"
+			} else if socialStatus == "mastodon_failed" {
+				socialStatus = "mastodon_failed_bluesky_success"
+			} else {
+				socialStatus = "bluesky_success"
+			}
+		}
+	}
+	
+	// Return result
+	if posted {
+		return &MultiPhotoUploadResult{
+			Success:      true,
+			SocialStatus: socialStatus,
+		}, nil
+	}
+	
+	// If we got here, nothing was posted
+	errorMessage := "Failed to post to social media"
+	if len(errors) > 0 {
+		errorMessage = strings.Join(errors, "; ")
+	}
+	
 	return &MultiPhotoUploadResult{
 		Success: false,
-		Error:   "Social posting from pull mode is not yet implemented. Please use the command line pull command with --mastodon or --bluesky flags.",
+		Error:   errorMessage,
 	}, nil
 }
