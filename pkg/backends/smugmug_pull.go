@@ -208,17 +208,24 @@ func (c *SmugMugPullClient) getImageSizes(ctx context.Context, imageKey string) 
 	
 	// Helper function to extract URL from size data
 	extractURL := func(sizeName string) string {
-		if sizeData, ok := imageSizeDetails[sizeName].(map[string]interface{}); ok {
-			if urlStr, ok := sizeData["Url"].(string); ok {
+		if sizeData, ok := imageSizeDetails[sizeName]; ok {
+			// First try direct string (SmugMug API returns URLs as direct strings)
+			if urlStr, ok := sizeData.(string); ok {
 				return urlStr
 			}
-			// Debug: Show what's in the size data
-			if os.Getenv("IMGUP_DEBUG") != "" {
-				fmt.Fprintf(os.Stderr, "DEBUG: Size %s exists but no URL found. Keys: ", sizeName)
-				for k := range sizeData {
-					fmt.Fprintf(os.Stderr, "%s ", k)
+			// Fall back to nested object with Url field (in case API changes)
+			if sizeMap, ok := sizeData.(map[string]interface{}); ok {
+				if urlStr, ok := sizeMap["Url"].(string); ok {
+					return urlStr
 				}
-				fmt.Fprintf(os.Stderr, "\n")
+				// Debug: Show what's in the size data
+				if os.Getenv("IMGUP_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "DEBUG: Size %s exists but no URL found. Keys: ", sizeName)
+					for k := range sizeMap {
+						fmt.Fprintf(os.Stderr, "%s ", k)
+					}
+					fmt.Fprintf(os.Stderr, "\n")
+				}
 			}
 		}
 		return ""
@@ -272,6 +279,12 @@ func (c *SmugMugPullClient) getImageSizes(ctx context.Context, imageKey string) 
 				}
 			}
 		}
+	}
+
+	// Debug: Show extracted URLs
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG: Extracted URLs - Large: %s, Medium: %s, Small: %s, Thumb: %s\n", 
+			sizes.Large, sizes.Medium, sizes.Small, sizes.Thumb)
 	}
 
 	return sizes, nil
