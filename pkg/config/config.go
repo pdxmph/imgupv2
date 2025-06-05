@@ -19,11 +19,12 @@ type Config struct {
 
 // DefaultConfig holds default settings
 type DefaultConfig struct {
-	Format         string `json:"format,omitempty"`
-	Service        string `json:"service,omitempty"`
-	DuplicateCheck *bool  `json:"duplicate_check,omitempty"`  // nil means use default (true)
-	PullService    string `json:"pull_service,omitempty"`     // default service for pull command
-	PullCount      int    `json:"pull_count,omitempty"`       // default number of images to pull
+	Format          string `json:"format,omitempty"`
+	Service         string `json:"service,omitempty"`
+	DuplicateCheck  *bool  `json:"duplicate_check,omitempty"`  // nil means use default (true)
+	PullService     string `json:"pull_service,omitempty"`     // default service for pull command
+	PullCount       int    `json:"pull_count,omitempty"`       // default number of images to pull
+	KittyThumbnails bool   `json:"kitty_thumbnails,omitempty"` // enable Kitty terminal thumbnails
 }
 
 // FlickrConfig holds Flickr-specific configuration

@@ -2,9 +2,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/pdxmph/imgupv2/pkg/backends"
 	"github.com/pdxmph/imgupv2/pkg/config"
+	"github.com/pdxmph/imgupv2/pkg/kitty"
 	"github.com/pdxmph/imgupv2/pkg/services/mastodon"
 	"github.com/pdxmph/imgupv2/pkg/services/bluesky"
 	"github.com/pdxmph/imgupv2/pkg/types"
@@ -214,6 +218,22 @@ func fetchImages(service, album string, count int) ([]types.PullImage, error) {
 }
 
 func displayImageList(images []types.PullImage) {
+	// Load config to check if Kitty thumbnails are enabled
+	cfg, err := config.Load()
+	if err == nil && cfg.Default.KittyThumbnails && kitty.IsKittyTerminal() {
+		// Try to display thumbnails in Kitty
+		if err := displayKittyThumbnails(images); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to display Kitty thumbnails: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Falling back to text display...")
+			displayTextList(images)
+		}
+	} else {
+		// Fall back to text display
+		displayTextList(images)
+	}
+}
+
+func displayTextList(images []types.PullImage) {
 	for i, img := range images {
 		fmt.Printf("%d) %s", i+1, img.Title)
 		if img.Description != "" {
@@ -222,6 +242,75 @@ func displayImageList(images []types.PullImage) {
 		fmt.Println()
 	}
 	fmt.Println()
+}
+
+func displayKittyThumbnails(images []types.PullImage) error {
+	display := kitty.NewImageDisplay()
+	
+	// Clear any existing images first
+	display.ClearImages()
+	
+	// Download and display thumbnails
+	fmt.Println("\nLoading thumbnails...\n")
+	
+	// Display each image with its info
+	for i, img := range images {
+		// Download thumbnail - prefer Small size for better visibility
+		thumbURL := img.Sizes.Small
+		if thumbURL == "" {
+			thumbURL = img.Sizes.Thumb // fallback to thumb if no small
+		}
+		if thumbURL == "" {
+			fmt.Printf("%d) %s [No thumbnail available]\n\n", i+1, img.Title)
+			continue
+		}
+		
+		resp, err := http.Get(thumbURL)
+		if err != nil {
+			fmt.Printf("%d) %s [Failed to download thumbnail]\n\n", i+1, img.Title)
+			continue
+		}
+		
+		// Check response status
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			fmt.Printf("%d) %s [HTTP error: %d]\n\n", i+1, img.Title, resp.StatusCode)
+			continue
+		}
+		
+		// Read the image data
+		data, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			fmt.Printf("%d) %s [Failed to read thumbnail]\n\n", i+1, img.Title)
+			continue
+		}
+		
+		// Check data size
+		if len(data) == 0 {
+			fmt.Printf("%d) %s [Empty thumbnail data]\n\n", i+1, img.Title)
+			continue
+		}
+		
+		// Display the thumbnail flush left
+		reader := bytes.NewReader(data)
+		if err := display.DisplayImage(reader, 0, 0); err != nil {
+			fmt.Printf("%d) %s [Failed to display thumbnail]\n\n", i+1, img.Title)
+			continue
+		}
+		
+		// Display metadata directly below the image
+		fmt.Printf("%d) %s", i+1, img.Title)
+		if img.Description != "" {
+			fmt.Printf(" -- %s", img.Description)
+		}
+		fmt.Println("\n") // Extra line for spacing between items
+	}
+	
+	// Clean up temp files when done
+	display.Cleanup()
+	
+	return nil
 }
 
 func getUserSelection(images []types.PullImage) []types.PullImage {
