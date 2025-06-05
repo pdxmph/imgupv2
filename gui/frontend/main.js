@@ -256,7 +256,161 @@ function setupEventListeners() {
         }
     });
     
+    // Listen for pull mode initialization
+    window.runtime.EventsOn('pull-mode-init', (data) => {
+        console.log('Pull mode initialized:', data);
+        
+        // Store pull context globally
+        window.pullModeData = data;
+        window.isPullMode = true;
+        
+        // Initialize pull mode UI
+        initializePullMode(data);
+    });
+    
+    // Listen for pull thumbnail downloads
+    window.runtime.EventsOn('pull-thumbnail-ready', (data) => {
+        console.log('Pull thumbnail ready for index:', data.index);
+        
+        if (window.pullModeData && window.pullModeData.photos[data.index]) {
+            // Update the thumbnail in the photos array
+            window.pullModeData.photos[data.index].thumbnail = data.thumbnail;
+            
+            // Update UI if this photo is currently displayed
+            if (window.multiPhotoData && window.currentPhotoIndex === data.index) {
+                const preview = document.getElementById('preview');
+                if (preview) {
+                    preview.src = data.thumbnail;
+                }
+            }
+            
+            // Update thumbnail in photo list if visible
+            const thumbElement = document.querySelector(`.photo-item[data-index="${data.index}"] img`);
+            if (thumbElement) {
+                thumbElement.src = data.thumbnail;
+            }
+        }
+    });
+    
     console.log('Event listeners setup complete');
+}
+
+// Initialize UI for pull mode
+function initializePullMode(data) {
+    console.log('Initializing pull mode with data:', data);
+    
+    // Convert pull photos to multi-photo format
+    const photos = data.photos.map((photo, index) => ({
+        ...photo,
+        index,
+        path: '', // No local path for pull photos
+        isFromPull: true,
+        isPullMode: true,
+        hasAltText: !!photo.alt
+    }));
+    
+    // Show pull mode indicator
+    const titleBar = document.querySelector('.form-section h2') || document.querySelector('h2');
+    if (titleBar) {
+        titleBar.innerHTML = `Pull from ${capitalize(data.service)} <span class="album-name">(${data.album || 'photostream'})</span>`;
+    }
+    
+    // Update the multi-photo UI for pull mode
+    showPullPhotoUI(photos);
+    
+    // Pre-populate social media settings
+    if (data.targets && data.targets.length > 0) {
+        if (data.targets.includes('mastodon')) {
+            document.getElementById('mastodon-enabled').checked = true;
+            document.getElementById('mastodon-options').classList.remove('hidden');
+            if (data.postText) {
+                document.getElementById('mastodon-text').value = data.postText;
+            }
+            if (data.visibility) {
+                document.getElementById('mastodon-visibility').value = data.visibility;
+            }
+        }
+        
+        if (data.targets.includes('bluesky')) {
+            document.getElementById('bluesky-enabled').checked = true;
+            document.getElementById('bluesky-options').classList.remove('hidden');
+            if (data.postText) {
+                document.getElementById('bluesky-text').value = data.postText;
+            }
+        }
+    }
+    
+    // Hide format selector - pull mode always outputs to social
+    const formatContainer = document.getElementById('format')?.parentElement?.parentElement;
+    if (formatContainer) {
+        formatContainer.style.display = 'none';
+    }
+    
+    // Hide private checkbox - not applicable for pull mode
+    const privateContainer = document.getElementById('private')?.parentElement?.parentElement;
+    if (privateContainer) {
+        privateContainer.style.display = 'none';
+    }
+}
+
+// Show UI for pull photo selection (adapted from showMultiPhotoUI)
+function showPullPhotoUI(photos) {
+    // Store photos for later use
+    window.multiPhotoData = photos;
+    window.currentPhotoIndex = 0;
+    
+    // Hide single photo preview, show multi-photo list
+    document.getElementById('preview-container').classList.add('hidden');
+    document.getElementById('multi-photo-list').classList.remove('hidden');
+    
+    // Update photo count
+    document.getElementById('photo-count').textContent = photos.length;
+    
+    // Build photo list
+    const listContainer = document.getElementById('photo-list-container');
+    listContainer.innerHTML = photos.map((photo, index) => {
+        const hasAlt = !!photo.alt;
+        return `
+        <div class="photo-item ${index === 0 ? 'selected' : ''}" data-index="${index}">
+            <div class="thumbnail">
+                ${photo.thumbnail ? 
+                    `<img src="${photo.thumbnail}" alt="${photo.title}">` :
+                    `<div class="thumbnail-placeholder">
+                        <span class="loading-spinner"></span>
+                    </div>`
+                }
+            </div>
+            <div class="photo-details">
+                <div class="photo-name">${photo.title || 'Untitled'}</div>
+                <div class="photo-source">${photo.sourceService} - ${formatFileSize(0)}</div>
+            </div>
+            <div class="alt-check ${hasAlt ? 'filled' : 'empty'}" title="${hasAlt ? 'Alt text provided' : 'Alt text not provided'}">${hasAlt ? '✓' : '○'}</div>
+        </div>
+    `}).join('');
+    
+    // Add click handlers for photo selection
+    listContainer.querySelectorAll('.photo-item').forEach(item => {
+        item.addEventListener('click', () => selectPhoto(parseInt(item.dataset.index)));
+    });
+    
+    // Update button text for pull mode
+    const uploadBtn = document.getElementById('upload-btn');
+    uploadBtn.textContent = `Post ${photos.length} Photos`;
+    
+    // Change cancel button behavior for pull mode
+    const cancelBtn = document.getElementById('cancel-btn');
+    cancelBtn.textContent = 'Cancel';
+    
+    // Load first photo's details
+    loadPhotoDetails(0);
+    
+    // Hide loading overlay
+    document.getElementById('loading-overlay').classList.add('hidden');
+}
+
+// Helper function to capitalize strings
+function capitalize(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
 // Add this function to watch for metadata population
@@ -374,13 +528,20 @@ async function loadSelectedPhoto() {
             // Don't hide the form - let the error overlay show instead
         }
     } catch (err) {
-        // Hide overlay on error
-        const overlay = document.getElementById('loading-overlay');
-        overlay.classList.add('hidden');
+        console.log('GetSelectedPhotos error:', err);
         
-        console.error('Failed to get selection:', err);
-        showError('Failed to get selected photo: ' + err);
-        // Don't hide the form - let the error overlay show instead
+        // Check if this is because we're in pull mode
+        if (err.includes && err.includes('pull mode active')) {
+            console.log('Pull mode detected, waiting for pull data...');
+            // Don't show error, just wait for pull-mode-init event
+            overlay.classList.remove('hidden');
+            overlay.querySelector('span').textContent = 'Loading pull data...';
+        } else {
+            // Hide overlay on error
+            overlay.classList.add('hidden');
+            
+            showError('Failed to get selected photos: ' + err);
+        }
     } finally {
         // Always hide loading overlay after 2 seconds as a failsafe
         setTimeout(() => {

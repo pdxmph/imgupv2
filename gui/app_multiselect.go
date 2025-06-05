@@ -15,6 +15,12 @@ import (
 func (a *App) GetSelectedPhotos() ([]PhotoMetadata, error) {
 	fmt.Println("DEBUG: GetSelectedPhotos called")
 	
+	// If we're in pull mode, don't try to get selected photos
+	if a.pullDataPath != "" {
+		fmt.Println("DEBUG: In pull mode, returning empty")
+		return nil, fmt.Errorf("pull mode active")
+	}
+	
 	if runtime.GOOS != "darwin" {
 		// Linux: Could check for nautilus/dolphin selection via DBus
 		// For now, return empty

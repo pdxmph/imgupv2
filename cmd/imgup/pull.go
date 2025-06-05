@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -622,8 +623,24 @@ func launchGUIWithPullData(pullReq *types.PullRequest) error {
 	}
 	
 	// Launch the GUI with the temp file path as argument
-	// Use the special --pull-data flag to indicate this is pull mode
-	cmd := exec.Command("open", "-W", guiPath, "--args", "--pull-data", tmpfile.Name())
+	// For development, run the binary directly to ensure args are passed
+	var cmd *exec.Cmd
+	
+	// Check if this is a .app bundle or direct binary
+	if strings.HasSuffix(guiPath, ".app") {
+		// It's an app bundle - run the binary inside it directly
+		binaryPath := filepath.Join(guiPath, "Contents", "MacOS", "imgupv2-gui")
+		if _, err := os.Stat(binaryPath); err == nil {
+			// Run the binary directly
+			cmd = exec.Command(binaryPath, "--pull-data", tmpfile.Name())
+		} else {
+			// Fall back to open command (might not pass args correctly)
+			cmd = exec.Command("open", "-W", guiPath, "--args", "--pull-data", tmpfile.Name())
+		}
+	} else {
+		// Direct binary path
+		cmd = exec.Command(guiPath, "--pull-data", tmpfile.Name())
+	}
 	
 	// Run and wait for GUI to complete
 	if err := cmd.Run(); err != nil {
@@ -635,13 +652,13 @@ func launchGUIWithPullData(pullReq *types.PullRequest) error {
 
 // findGUIApp locates the imgupv2-gui.app
 func findGUIApp() string {
-	// Check common locations
+	// Check common locations - prioritize development build
 	searchPaths := []string{
+		// Development build location FIRST
+		filepath.Join(os.Getenv("HOME"), "code", "imgupv2", "gui", "build", "bin", "imgupv2-gui.app"),
+		// Then installed versions
 		"/Applications/imgupv2-gui.app",
 		filepath.Join(os.Getenv("HOME"), "Applications", "imgupv2-gui.app"),
-		filepath.Join(os.Getenv("HOME"), "code", "imgupv2", "gui", "build", "bin", "imgupv2-gui.app"),
-		// Development build location
-		filepath.Join(os.Getenv("HOME"), "code", "imgupv2", "gui", "build", "bin", "imgupv2-gui.app"),
 	}
 	
 	for _, path := range searchPaths {

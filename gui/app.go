@@ -136,19 +136,22 @@ func (a *App) startup(ctx context.Context) {
 	if a.pullDataPath != "" {
 		fmt.Printf("DEBUG: Loading pull data from: %s\n", a.pullDataPath)
 		go func() {
-			// Give frontend time to initialize
-			time.Sleep(200 * time.Millisecond)
+			// Give frontend minimal time to initialize event listeners
+			time.Sleep(50 * time.Millisecond)
 			
 			// Read the pull data file
 			data, err := os.ReadFile(a.pullDataPath)
 			if err != nil {
 				fmt.Printf("ERROR: Failed to read pull data: %v\n", err)
+				wailsRuntime.WindowShow(a.ctx) // Show window anyway
 				return
 			}
 			
 			// Handle the pull request
 			if err := a.HandlePullRequest(string(data)); err != nil {
 				fmt.Printf("ERROR: Failed to handle pull request: %v\n", err)
+				wailsRuntime.WindowShow(a.ctx) // Show window anyway
+				return
 			}
 			
 			// Clean up the temp file
@@ -197,6 +200,11 @@ func (a *App) ResizeWindow(showMastodon bool) {
 
 // GetSelectedPhoto gets the currently selected photo from Finder/Photos
 func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
+	// If we're in pull mode, don't try to get selected photos
+	if a.pullDataPath != "" {
+		return nil, fmt.Errorf("pull mode active")
+	}
+	
 	var path string
 
 	if runtime.GOOS == "darwin" {
@@ -1406,6 +1414,7 @@ func (a *App) HandlePullRequest(pullJSON string) error {
 	}
 	
 	fmt.Printf("DEBUG: Parsed pull request with %d images from %s\n", len(pullReq.Images), pullReq.Source.Service)
+	fmt.Printf("DEBUG: Pull targets: %v, Post text: %q\n", pullReq.Targets, pullReq.Post)
 	
 	// Convert to GUI photo data format
 	var photos []PullPhotoData

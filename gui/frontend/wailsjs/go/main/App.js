@@ -18,6 +18,14 @@ export function GetSelectedPhotos() {
   return window['go']['main']['App']['GetSelectedPhotos']();
 }
 
+export function HandlePullRequest(arg1) {
+  return window['go']['main']['App']['HandlePullRequest'](arg1);
+}
+
+export function PostPullSelection(arg1) {
+  return window['go']['main']['App']['PostPullSelection'](arg1);
+}
+
 export function ResizeWindow(arg1) {
   return window['go']['main']['App']['ResizeWindow'](arg1);
 }

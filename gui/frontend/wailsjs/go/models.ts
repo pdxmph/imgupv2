@@ -205,3 +205,122 @@ export namespace main {
 
 }
 
+export namespace types {
+	
+	export class ImageSizes {
+	    large: string;
+	    medium: string;
+	    small: string;
+	    thumb: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImageSizes(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.large = source["large"];
+	        this.medium = source["medium"];
+	        this.small = source["small"];
+	        this.thumb = source["thumb"];
+	    }
+	}
+	export class PullImage {
+	    id: string;
+	    title: string;
+	    description?: string;
+	    source_url: string;
+	    sizes: ImageSizes;
+	    alt: string;
+	    tags?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PullImage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.description = source["description"];
+	        this.source_url = source["source_url"];
+	        this.sizes = this.convertValues(source["sizes"], ImageSizes);
+	        this.alt = source["alt"];
+	        this.tags = source["tags"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PullSource {
+	    service: string;
+	    album?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PullSource(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.service = source["service"];
+	        this.album = source["album"];
+	    }
+	}
+	export class PullRequest {
+	    source: PullSource;
+	    post: string;
+	    images: PullImage[];
+	    targets?: string[];
+	    visibility?: string;
+	    format?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PullRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source = this.convertValues(source["source"], PullSource);
+	        this.post = source["post"];
+	        this.images = this.convertValues(source["images"], PullImage);
+	        this.targets = source["targets"];
+	        this.visibility = source["visibility"];
+	        this.format = source["format"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
