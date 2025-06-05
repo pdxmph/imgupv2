@@ -4,6 +4,7 @@ import (
 	"embed"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/wailsapp/wails/v2"
@@ -25,7 +26,7 @@ func main() {
 	
 	// Parse command line arguments
 	var pullDataPath string
-	flag.StringVar(&pullDataPath, "pull-data", "", "Path to pull request JSON file")
+	flag.StringVar(&pullDataPath, "pull-data", "", "Path to pull request JSON file (use '-' for stdin)")
 	flag.Parse()
 	
 	fmt.Printf("DEBUG: main() - args: %v\n", os.Args)
@@ -34,10 +35,23 @@ func main() {
 	// Create an instance of the app structure
 	app := NewApp()
 	
-	// If pull data is provided, set it up for loading after startup
+	// If pull data is provided, handle it
 	if pullDataPath != "" {
-		fmt.Printf("DEBUG: main() - Setting app.pullDataPath to: %s\n", pullDataPath)
-		app.pullDataPath = pullDataPath
+		if pullDataPath == "-" {
+			// Read from stdin
+			fmt.Println("DEBUG: Reading pull data from stdin")
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				fmt.Printf("ERROR: Failed to read from stdin: %v\n", err)
+				os.Exit(1)
+			}
+			app.pullDataJSON = string(data)
+			fmt.Printf("DEBUG: Read %d bytes from stdin\n", len(data))
+		} else {
+			// File path provided - keep for backward compatibility
+			fmt.Printf("DEBUG: main() - Setting app.pullDataPath to: %s\n", pullDataPath)
+			app.pullDataPath = pullDataPath
+		}
 	}
 
 	// Create application with options

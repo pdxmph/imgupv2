@@ -30,6 +30,7 @@ type App struct {
 	cachedPhotoIDs map[string]bool // Track which Photos IDs already have cached thumbnails
 	currentPullRequest *types.PullRequest // Store current pull request
 	pullDataPath string // Path to pull data file if launched from CLI
+	pullDataJSON string // Pull data JSON if provided via stdin
 }
 
 // PhotoMetadata represents the metadata for a photo
@@ -137,7 +138,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 	
 	// Check if we have pull data to load
-	if a.pullDataPath != "" {
+	if a.pullDataPath != "" || a.pullDataJSON != "" {
 		fmt.Printf("DEBUG: Loading pull data from: %s\n", a.pullDataPath)
 		
 		// Show window immediately but in pull mode
@@ -150,16 +151,27 @@ func (a *App) startup(ctx context.Context) {
 			// Give frontend more time to initialize event listeners
 			time.Sleep(500 * time.Millisecond)
 			
-			// Read the pull data file
-			data, err := os.ReadFile(a.pullDataPath)
-			if err != nil {
-				fmt.Printf("ERROR: Failed to read pull data: %v\n", err)
-				wailsRuntime.WindowShow(a.ctx) // Show window anyway
-				return
+			var data string
+			
+			// Get data from JSON or file
+			if a.pullDataJSON != "" {
+				// Data already provided via stdin
+				data = a.pullDataJSON
+				fmt.Printf("DEBUG: Using pull data from stdin (%d bytes)\n", len(data))
+			} else if a.pullDataPath != "" {
+				// Read the pull data file
+				fileData, err := os.ReadFile(a.pullDataPath)
+				if err != nil {
+					fmt.Printf("ERROR: Failed to read pull data: %v\n", err)
+					wailsRuntime.WindowShow(a.ctx) // Show window anyway
+					return
+				}
+				data = string(fileData)
+				fmt.Printf("DEBUG: Read pull data from file (%d bytes)\n", len(data))
 			}
 			
 			// Handle the pull request
-			if err := a.HandlePullRequest(string(data)); err != nil {
+			if err := a.HandlePullRequest(data); err != nil {
 				fmt.Printf("ERROR: Failed to handle pull request: %v\n", err)
 				wailsRuntime.WindowShow(a.ctx) // Show window anyway
 				return

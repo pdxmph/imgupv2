@@ -604,69 +604,55 @@ func launchGUIWithPullData(pullReq *types.PullRequest) error {
 		return fmt.Errorf("failed to serialize pull request: %w", err)
 	}
 	
-	// Create temp file to store the JSON
-	tmpfile, err := os.CreateTemp("", "imgup-pull-gui-*.json")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tmpfileName := tmpfile.Name()
-	tmpfile.Close() // Close immediately so GUI can read it
-	defer os.Remove(tmpfileName) // Clean up after GUI exits
-	
-	// Write JSON to temp file
-	if err := os.WriteFile(tmpfileName, jsonData, 0600); err != nil {
-		return fmt.Errorf("failed to write temp file: %w", err)
-	}
-	
-	fmt.Printf("DEBUG: Wrote %d bytes to temp file: %s\n", len(jsonData), tmpfileName)
-	
-	// Verify file exists and is readable
-	if stat, err := os.Stat(tmpfileName); err != nil {
-		return fmt.Errorf("temp file not accessible: %w", err) 
-	} else {
-		fmt.Printf("DEBUG: Temp file size: %d bytes\n", stat.Size())
-	}
-	
 	// Find the GUI app
 	guiPath := findGUIApp()
 	if guiPath == "" {
 		return fmt.Errorf("imgupv2-gui.app not found. Please ensure the GUI is installed.")
 	}
 	
-	// Launch the GUI with the temp file path as argument
-	// For development, run the binary directly to ensure args are passed
+	// Set up the command
 	var cmd *exec.Cmd
 	
-	// Check if we have a launch script for testing
-	launchScript := filepath.Join(os.Getenv("HOME"), "code", "imgupv2", "gui", "launch-pull.sh")
-	if _, err := os.Stat(launchScript); err == nil {
-		// Use the launch script
-		fmt.Printf("DEBUG: Using launch script: %s\n", launchScript)
-		cmd = exec.Command(launchScript, tmpfileName)
-	} else if strings.HasSuffix(guiPath, ".app") {
+	if strings.HasSuffix(guiPath, ".app") {
 		// It's an app bundle - run the binary inside it directly
 		binaryPath := filepath.Join(guiPath, "Contents", "MacOS", "imgupv2-gui")
 		if _, err := os.Stat(binaryPath); err == nil {
-			// Run the binary directly
-			cmd = exec.Command(binaryPath, "--pull-data", tmpfileName)
+			// Run the binary directly with stdin
+			cmd = exec.Command(binaryPath, "--pull-data", "-")
 		} else {
-			// Fall back to open command (might not pass args correctly)
-			cmd = exec.Command("open", "-W", guiPath, "--args", "--pull-data", tmpfileName)
+			// Can't use open command with stdin
+			return fmt.Errorf("cannot access GUI binary inside app bundle")
 		}
 	} else {
 		// Direct binary path
-		cmd = exec.Command(guiPath, "--pull-data", tmpfileName)
+		cmd = exec.Command(guiPath, "--pull-data", "-")
 	}
 	
-	fmt.Printf("DEBUG: Running command: %s %v\n", cmd.Path, cmd.Args)
+	// Set up stdin pipe
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
 	
 	// Capture stdout and stderr for debugging
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	
-	// Run and wait for GUI to complete
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to launch GUI: %w", err)
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start GUI: %w", err)
+	}
+	
+	// Write JSON data to stdin
+	if _, err := stdin.Write(jsonData); err != nil {
+		cmd.Process.Kill()
+		return fmt.Errorf("failed to write to stdin: %w", err)
+	}
+	stdin.Close()
+	
+	// Wait for GUI to complete
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("GUI exited with error: %w", err)
 	}
 	
 	return nil
