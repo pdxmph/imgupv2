@@ -118,6 +118,7 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	fmt.Println("DEBUG: startup called")
+	fmt.Printf("DEBUG: startup - pullDataPath = %s\n", a.pullDataPath)
 	a.ctx = ctx
 	
 	// Initialize thumbnail generator with cache
@@ -135,9 +136,16 @@ func (a *App) startup(ctx context.Context) {
 	// Check if we have pull data to load
 	if a.pullDataPath != "" {
 		fmt.Printf("DEBUG: Loading pull data from: %s\n", a.pullDataPath)
+		
+		// Show window immediately but in pull mode
+		wailsRuntime.WindowShow(a.ctx)
+		
+		// Emit a pull mode indicator immediately
+		wailsRuntime.EventsEmit(a.ctx, "pull-mode-starting")
+		
 		go func() {
 			// Give frontend minimal time to initialize event listeners
-			time.Sleep(50 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 			
 			// Read the pull data file
 			data, err := os.ReadFile(a.pullDataPath)
@@ -154,8 +162,8 @@ func (a *App) startup(ctx context.Context) {
 				return
 			}
 			
-			// Clean up the temp file
-			os.Remove(a.pullDataPath)
+			// Don't clean up the temp file - let the CLI do it
+			// os.Remove(a.pullDataPath)
 			
 			// Show the window
 			wailsRuntime.WindowShow(a.ctx)

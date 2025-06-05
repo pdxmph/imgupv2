@@ -609,11 +609,22 @@ func launchGUIWithPullData(pullReq *types.PullRequest) error {
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer os.Remove(tmpfile.Name()) // Clean up after GUI exits
+	tmpfileName := tmpfile.Name()
+	tmpfile.Close() // Close immediately so GUI can read it
+	defer os.Remove(tmpfileName) // Clean up after GUI exits
 	
 	// Write JSON to temp file
-	if err := os.WriteFile(tmpfile.Name(), jsonData, 0600); err != nil {
+	if err := os.WriteFile(tmpfileName, jsonData, 0600); err != nil {
 		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+	
+	fmt.Printf("DEBUG: Wrote %d bytes to temp file: %s\n", len(jsonData), tmpfileName)
+	
+	// Verify file exists and is readable
+	if stat, err := os.Stat(tmpfileName); err != nil {
+		return fmt.Errorf("temp file not accessible: %w", err) 
+	} else {
+		fmt.Printf("DEBUG: Temp file size: %d bytes\n", stat.Size())
 	}
 	
 	// Find the GUI app
@@ -626,21 +637,32 @@ func launchGUIWithPullData(pullReq *types.PullRequest) error {
 	// For development, run the binary directly to ensure args are passed
 	var cmd *exec.Cmd
 	
-	// Check if this is a .app bundle or direct binary
-	if strings.HasSuffix(guiPath, ".app") {
+	// Check if we have a launch script for testing
+	launchScript := filepath.Join(os.Getenv("HOME"), "code", "imgupv2", "gui", "launch-pull.sh")
+	if _, err := os.Stat(launchScript); err == nil {
+		// Use the launch script
+		fmt.Printf("DEBUG: Using launch script: %s\n", launchScript)
+		cmd = exec.Command(launchScript, tmpfileName)
+	} else if strings.HasSuffix(guiPath, ".app") {
 		// It's an app bundle - run the binary inside it directly
 		binaryPath := filepath.Join(guiPath, "Contents", "MacOS", "imgupv2-gui")
 		if _, err := os.Stat(binaryPath); err == nil {
 			// Run the binary directly
-			cmd = exec.Command(binaryPath, "--pull-data", tmpfile.Name())
+			cmd = exec.Command(binaryPath, "--pull-data", tmpfileName)
 		} else {
 			// Fall back to open command (might not pass args correctly)
-			cmd = exec.Command("open", "-W", guiPath, "--args", "--pull-data", tmpfile.Name())
+			cmd = exec.Command("open", "-W", guiPath, "--args", "--pull-data", tmpfileName)
 		}
 	} else {
 		// Direct binary path
-		cmd = exec.Command(guiPath, "--pull-data", tmpfile.Name())
+		cmd = exec.Command(guiPath, "--pull-data", tmpfileName)
 	}
+	
+	fmt.Printf("DEBUG: Running command: %s %v\n", cmd.Path, cmd.Args)
+	
+	// Capture stdout and stderr for debugging
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	
 	// Run and wait for GUI to complete
 	if err := cmd.Run(); err != nil {

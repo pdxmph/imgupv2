@@ -4,6 +4,7 @@ import (
 	"embed"
 	"flag"
 	"fmt"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -16,17 +17,26 @@ var assets embed.FS
 
 // main is the application entry point
 func main() {
+	// Debug: Log raw arguments
+	fmt.Printf("DEBUG: main() started with %d args\n", len(os.Args))
+	for i, arg := range os.Args {
+		fmt.Printf("DEBUG: arg[%d] = %s\n", i, arg)
+	}
+	
 	// Parse command line arguments
 	var pullDataPath string
 	flag.StringVar(&pullDataPath, "pull-data", "", "Path to pull request JSON file")
 	flag.Parse()
+	
+	fmt.Printf("DEBUG: main() - args: %v\n", os.Args)
+	fmt.Printf("DEBUG: main() - pullDataPath after parsing: %s\n", pullDataPath)
 	
 	// Create an instance of the app structure
 	app := NewApp()
 	
 	// If pull data is provided, set it up for loading after startup
 	if pullDataPath != "" {
-		fmt.Printf("DEBUG: Pull data path provided: %s\n", pullDataPath)
+		fmt.Printf("DEBUG: main() - Setting app.pullDataPath to: %s\n", pullDataPath)
 		app.pullDataPath = pullDataPath
 	}
 

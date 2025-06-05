@@ -32,8 +32,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         cleanupMultiPhotoListeners();
     });
     
-    // NOW load the selected photo (after event listeners are ready)
-    await loadSelectedPhoto();
+    // Check if we should wait for pull mode
+    // Give backend a brief moment to set up pull mode
+    setTimeout(async () => {
+        if (!window.isPullMode) {
+            // Only load selected photo if we're not in pull mode
+            await loadSelectedPhoto();
+        }
+    }, 100);
 });
 
 // Set up all event listeners
@@ -252,6 +258,21 @@ function setupEventListeners() {
                 } catch (err) {
                     console.error('Failed to resize window:', err);
                 }
+            }
+        }
+    });
+    
+    // Listen for pull mode starting - prevents normal photo loading
+    window.runtime.EventsOn('pull-mode-starting', () => {
+        console.log('Pull mode starting, skipping normal photo load');
+        window.isPullMode = true;
+        
+        // Update loading message
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay) {
+            const span = overlay.querySelector('span');
+            if (span) {
+                span.textContent = 'Loading pull data...';
             }
         }
     });
@@ -481,6 +502,14 @@ function watchForMetadata() {
 
 // Extract photo loading logic into a separate function
 async function loadSelectedPhoto() {
+    console.log('loadSelectedPhoto called, isPullMode:', window.isPullMode);
+    
+    // Skip if we're in pull mode
+    if (window.isPullMode) {
+        console.log('Skipping photo load - pull mode active');
+        return;
+    }
+    
     const overlay = document.getElementById('loading-overlay');
     
     try {
