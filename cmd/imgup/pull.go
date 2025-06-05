@@ -163,8 +163,11 @@ func pullCommand(cmd *cobra.Command, args []string) {
 	pullReq := createPullRequest(selected, service, album)
 
 	if pullGUI {
-		// TODO: Pipe to GUI
-		fmt.Println("GUI integration not yet implemented")
+		// Launch GUI with pull data
+		if err := launchGUIWithPullData(pullReq); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to launch GUI: %v\n", err)
+			os.Exit(1)
+		}
 	} else {
 		// If post text provided via flag, skip editor
 		if pullPost != "" {
@@ -590,4 +593,71 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// launchGUIWithPullData launches the GUI app with pull request data
+func launchGUIWithPullData(pullReq *types.PullRequest) error {
+	// Serialize pull request to JSON
+	jsonData, err := json.Marshal(pullReq)
+	if err != nil {
+		return fmt.Errorf("failed to serialize pull request: %w", err)
+	}
+	
+	// Create temp file to store the JSON
+	tmpfile, err := os.CreateTemp("", "imgup-pull-gui-*.json")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tmpfile.Name()) // Clean up after GUI exits
+	
+	// Write JSON to temp file
+	if err := os.WriteFile(tmpfile.Name(), jsonData, 0600); err != nil {
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+	
+	// Find the GUI app
+	guiPath := findGUIApp()
+	if guiPath == "" {
+		return fmt.Errorf("imgupv2-gui.app not found. Please ensure the GUI is installed.")
+	}
+	
+	// Launch the GUI with the temp file path as argument
+	// Use the special --pull-data flag to indicate this is pull mode
+	cmd := exec.Command("open", "-W", guiPath, "--args", "--pull-data", tmpfile.Name())
+	
+	// Run and wait for GUI to complete
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to launch GUI: %w", err)
+	}
+	
+	return nil
+}
+
+// findGUIApp locates the imgupv2-gui.app
+func findGUIApp() string {
+	// Check common locations
+	searchPaths := []string{
+		"/Applications/imgupv2-gui.app",
+		filepath.Join(os.Getenv("HOME"), "Applications", "imgupv2-gui.app"),
+		filepath.Join(os.Getenv("HOME"), "code", "imgupv2", "gui", "build", "bin", "imgupv2-gui.app"),
+		// Development build location
+		filepath.Join(os.Getenv("HOME"), "code", "imgupv2", "gui", "build", "bin", "imgupv2-gui.app"),
+	}
+	
+	for _, path := range searchPaths {
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			return path
+		}
+	}
+	
+	// Try to find using mdfind (Spotlight)
+	cmd := exec.Command("mdfind", "kMDItemCFBundleIdentifier == 'com.wails.imgupv2-gui'")
+	if output, err := cmd.Output(); err == nil {
+		apps := strings.Split(strings.TrimSpace(string(output)), "\n")
+		if len(apps) > 0 && apps[0] != "" {
+			return apps[0]
+		}
+	}
+	
+	return ""
 }

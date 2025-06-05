@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/pdxmph/imgupv2/pkg/duplicate"
 	"github.com/pdxmph/imgupv2/pkg/thumbnail"
+	"github.com/pdxmph/imgupv2/pkg/types"
 )
 
 // App struct
@@ -22,6 +25,8 @@ type App struct {
 	ctx       context.Context
 	thumbGen  *thumbnail.Generator
 	cachedPhotoIDs map[string]bool // Track which Photos IDs already have cached thumbnails
+	currentPullRequest *types.PullRequest // Store current pull request
+	pullDataPath string // Path to pull data file if launched from CLI
 }
 
 // PhotoMetadata represents the metadata for a photo
@@ -125,6 +130,34 @@ func (a *App) startup(ctx context.Context) {
 		fmt.Printf("DEBUG: cache init failed: %v\n", err)
 		// Fall back to no-cache generator
 		a.thumbGen = thumbnail.NewGenerator(nil)
+	}
+	
+	// Check if we have pull data to load
+	if a.pullDataPath != "" {
+		fmt.Printf("DEBUG: Loading pull data from: %s\n", a.pullDataPath)
+		go func() {
+			// Give frontend time to initialize
+			time.Sleep(200 * time.Millisecond)
+			
+			// Read the pull data file
+			data, err := os.ReadFile(a.pullDataPath)
+			if err != nil {
+				fmt.Printf("ERROR: Failed to read pull data: %v\n", err)
+				return
+			}
+			
+			// Handle the pull request
+			if err := a.HandlePullRequest(string(data)); err != nil {
+				fmt.Printf("ERROR: Failed to handle pull request: %v\n", err)
+			}
+			
+			// Clean up the temp file
+			os.Remove(a.pullDataPath)
+			
+			// Show the window
+			wailsRuntime.WindowShow(a.ctx)
+		}()
+		return
 	}
 	
 	fmt.Println("DEBUG: starting window show goroutine")
@@ -1346,4 +1379,125 @@ func (a *App) extractMetadata(imagePath string) PhotoMetadata {
 	}
 	
 	return metadata
+}
+
+// PullPhotoData represents photo data from pull command
+type PullPhotoData struct {
+	PhotoMetadata
+	RemoteURL    string `json:"remoteUrl"`    // URL to the original photo page
+	ThumbnailURL string `json:"thumbnailUrl"` // URL for thumbnail
+	ImageURLs    struct {
+		Large  string `json:"large"`
+		Medium string `json:"medium"`
+		Small  string `json:"small"`
+	} `json:"imageUrls"`
+	SourceService string `json:"sourceService"` // "smugmug" or "flickr"
+	SourceAlbum   string `json:"sourceAlbum"`
+}
+
+// HandlePullRequest receives pull data from CLI and prepares GUI for selection
+func (a *App) HandlePullRequest(pullJSON string) error {
+	fmt.Printf("DEBUG: HandlePullRequest called with %d bytes of JSON\n", len(pullJSON))
+	
+	// Parse the pull request
+	var pullReq types.PullRequest
+	if err := json.Unmarshal([]byte(pullJSON), &pullReq); err != nil {
+		return fmt.Errorf("failed to parse pull request: %w", err)
+	}
+	
+	fmt.Printf("DEBUG: Parsed pull request with %d images from %s\n", len(pullReq.Images), pullReq.Source.Service)
+	
+	// Convert to GUI photo data format
+	var photos []PullPhotoData
+	for _, img := range pullReq.Images {
+		photo := PullPhotoData{
+			PhotoMetadata: PhotoMetadata{
+				Title:       img.Title,
+				Description: img.Description,
+				Alt:         img.Alt,
+				Tags:        img.Tags,
+				Format:      "url", // Default for pull operations
+			},
+			RemoteURL:     img.SourceURL,
+			ThumbnailURL:  img.Sizes.Thumb,
+			SourceService: pullReq.Source.Service,
+			SourceAlbum:   pullReq.Source.Album,
+		}
+		
+		// Store image URLs
+		photo.ImageURLs.Large = img.Sizes.Large
+		photo.ImageURLs.Medium = img.Sizes.Medium
+		photo.ImageURLs.Small = img.Sizes.Small
+		
+		photos = append(photos, photo)
+	}
+	
+	// Store pull context for later use
+	a.currentPullRequest = &pullReq
+	
+	// Download thumbnails in parallel
+	go a.downloadPullThumbnails(photos)
+	
+	// Emit event to frontend with pull data
+	wailsRuntime.EventsEmit(a.ctx, "pull-mode-init", map[string]interface{}{
+		"photos":     photos,
+		"service":    pullReq.Source.Service,
+		"album":      pullReq.Source.Album,
+		"postText":   pullReq.Post,
+		"targets":    pullReq.Targets,
+		"visibility": pullReq.Visibility,
+		"format":     pullReq.Format,
+	})
+	
+	return nil
+}
+
+// downloadPullThumbnails downloads thumbnails for pull photos in parallel
+func (a *App) downloadPullThumbnails(photos []PullPhotoData) {
+	for i, photo := range photos {
+		go func(index int, p PullPhotoData) {
+			if p.ThumbnailURL == "" {
+				return
+			}
+			
+			// Download thumbnail
+			resp, err := http.Get(p.ThumbnailURL)
+			if err != nil {
+				fmt.Printf("Failed to download thumbnail for %s: %v\n", p.Title, err)
+				return
+			}
+			defer resp.Body.Close()
+			
+			if resp.StatusCode != http.StatusOK {
+				fmt.Printf("Failed to download thumbnail for %s: status %d\n", p.Title, resp.StatusCode)
+				return
+			}
+			
+			// Read thumbnail data
+			thumbData, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Failed to read thumbnail for %s: %v\n", p.Title, err)
+				return
+			}
+			
+			// Convert to base64
+			base64Thumb := base64.StdEncoding.EncodeToString(thumbData)
+			
+			// Emit thumbnail ready event
+			wailsRuntime.EventsEmit(a.ctx, "pull-thumbnail-ready", map[string]interface{}{
+				"index":     index,
+				"thumbnail": "data:image/jpeg;base64," + base64Thumb,
+			})
+		}(i, photo)
+	}
+}
+
+// PostPullSelection handles the social media posting for selected pull images
+func (a *App) PostPullSelection(request types.PullRequest) (*MultiPhotoUploadResult, error) {
+	// This will be implemented to handle the actual posting
+	// For now, return a placeholder
+	return &MultiPhotoUploadResult{
+		Success: false,
+		Error:   "Pull posting not yet implemented",
+	}, nil
 }
