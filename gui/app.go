@@ -97,6 +97,7 @@ type MultiPhotoUploadResult struct {
 	Outputs      []MultiPhotoOutputResult  `json:"outputs"`
 	Error        string                   `json:"error,omitempty"`
 	SocialStatus string                   `json:"socialStatus,omitempty"`
+	IsPullMode   bool                     `json:"isPullMode,omitempty"` // Indicates this was a pull/social post operation
 }
 
 // MultiPhotoOutputResult represents the result for a single photo
@@ -1772,6 +1773,7 @@ func (a *App) PostPullSelection(request types.PullRequest) (*MultiPhotoUploadRes
 		return &MultiPhotoUploadResult{
 			Success:      true,
 			SocialStatus: socialStatus,
+			IsPullMode:   true,
 		}, nil
 	}
 	
@@ -1782,7 +1784,8 @@ func (a *App) PostPullSelection(request types.PullRequest) (*MultiPhotoUploadRes
 	}
 	
 	return &MultiPhotoUploadResult{
-		Success: false,
-		Error:   errorMessage,
+		Success:    false,
+		Error:      errorMessage,
+		IsPullMode: true,
 	}, nil
 }

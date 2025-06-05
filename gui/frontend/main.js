@@ -388,12 +388,25 @@ function initializePullMode(data) {
     // Show pull mode indicator
     const titleBar = document.querySelector('.form-section h2') || document.querySelector('h2');
     if (titleBar) {
-        titleBar.innerHTML = `Pull from ${capitalize(data.service)} <span class="album-name">(${data.album || 'photostream'})</span>`;
+        titleBar.innerHTML = `<span style="color: #4CAF50;">📤 Social Post Mode</span> - Pull from ${capitalize(data.service)} <span class="album-name">(${data.album || 'photostream'})</span>`;
     }
     
     // Update the multi-photo UI for pull mode
     console.log('About to call showPullPhotoUI with', photos.length, 'photos');
     showPullPhotoUI(photos);
+    
+    // Change upload button text for pull mode
+    const uploadBtn = document.getElementById('upload-btn');
+    if (uploadBtn) {
+        uploadBtn.textContent = 'Post to Social Media';
+        uploadBtn.style.backgroundColor = '#4CAF50'; // Green color for social posting
+    }
+    
+    // Hide format selector for pull mode (always social)
+    const formatSection = document.querySelector('.format-selection');
+    if (formatSection) {
+        formatSection.style.display = 'none';
+    }
     
     // Pre-populate social media settings
     if (data.targets && data.targets.length > 0) {
@@ -1007,7 +1020,11 @@ async function handleMultiPhotoUpload() {
             format: form.format.value || 'url'
         };
         
-        console.log('Uploading multiple photos:', uploadData);
+        if (window.isPullMode) {
+            console.log('Posting photos to social media:', uploadData);
+        } else {
+            console.log('Uploading multiple photos:', uploadData);
+        }
         console.log('DEBUG: uploadData.bluesky =', uploadData.bluesky);
         console.log('DEBUG: uploadData.mastodon =', uploadData.mastodon);
         console.log('DEBUG: uploadData.post =', uploadData.post);
@@ -1097,17 +1114,40 @@ async function handleMultiPhotoUpload() {
             
             // Build success message based on what was uploaded
             let successMessage = '';
-            if (duplicateCount > 0 && newUploadCount > 0) {
-                successMessage = `Uploaded ${newUploadCount} new photo${newUploadCount > 1 ? 's' : ''} and found ${duplicateCount} duplicate${duplicateCount > 1 ? 's' : ''}!`;
-            } else if (duplicateCount > 0) {
-                successMessage = `All ${duplicateCount} photo${duplicateCount > 1 ? 's were' : ' was'} already uploaded (duplicate${duplicateCount > 1 ? 's' : ''})!`;
-            } else {
-                successMessage = `Successfully uploaded ${newUploadCount} photo${newUploadCount > 1 ? 's' : ''}!`;
-            }
-            successMessage += ' URLs copied to clipboard.';
             
-            if (result.socialStatus) {
-                successMessage += ` ${result.socialStatus}.`;
+            // Check if this is pull mode (social posting)
+            if (result.isPullMode || window.isPullMode) {
+                // For pull mode, we're posting to social media, not uploading
+                const imageCount = window.multiPhotoData ? window.multiPhotoData.length : 0;
+                successMessage = `Successfully posted ${imageCount} photo${imageCount !== 1 ? 's' : ''} to social media!`;
+                
+                // Add specific social media status if available
+                if (result.socialStatus) {
+                    const statusMessages = {
+                        'both_success': 'Posted to Mastodon and Bluesky',
+                        'mastodon_success': 'Posted to Mastodon',
+                        'bluesky_success': 'Posted to Bluesky',
+                        'mastodon_success_bluesky_failed': 'Posted to Mastodon (Bluesky failed)',
+                        'mastodon_failed_bluesky_success': 'Posted to Bluesky (Mastodon failed)',
+                        'both_failed': 'Failed to post to both platforms'
+                    };
+                    const statusMsg = statusMessages[result.socialStatus] || result.socialStatus;
+                    successMessage = `${statusMsg} with ${imageCount} photo${imageCount !== 1 ? 's' : ''}.`;
+                }
+            } else {
+                // Regular upload mode
+                if (duplicateCount > 0 && newUploadCount > 0) {
+                    successMessage = `Uploaded ${newUploadCount} new photo${newUploadCount > 1 ? 's' : ''} and found ${duplicateCount} duplicate${duplicateCount > 1 ? 's' : ''}!`;
+                } else if (duplicateCount > 0) {
+                    successMessage = `All ${duplicateCount} photo${duplicateCount > 1 ? 's were' : ' was'} already uploaded (duplicate${duplicateCount > 1 ? 's' : ''})!`;
+                } else {
+                    successMessage = `Successfully uploaded ${newUploadCount} photo${newUploadCount > 1 ? 's' : ''}!`;
+                }
+                successMessage += ' URLs copied to clipboard.';
+                
+                if (result.socialStatus) {
+                    successMessage += ` ${result.socialStatus}.`;
+                }
             }
             
             // Show as duplicate type if all were duplicates

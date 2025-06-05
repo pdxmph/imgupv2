@@ -97,6 +97,7 @@ export namespace main {
 	    outputs: MultiPhotoOutputResult[];
 	    error?: string;
 	    socialStatus?: string;
+	    isPullMode?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new MultiPhotoUploadResult(source);
@@ -108,6 +109,7 @@ export namespace main {
 	        this.outputs = this.convertValues(source["outputs"], MultiPhotoOutputResult);
 	        this.error = source["error"];
 	        this.socialStatus = source["socialStatus"];
+	        this.isPullMode = source["isPullMode"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
