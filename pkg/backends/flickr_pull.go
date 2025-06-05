@@ -27,7 +27,7 @@ func NewFlickrPullClient(cfg *config.FlickrConfig) *FlickrPullClient {
 }
 
 // PullImages fetches recent images from Flickr
-func (c *FlickrPullClient) PullImages(ctx context.Context, albumName string, count int) ([]types.PullImage, error) {
+func (c *FlickrPullClient) PullImages(ctx context.Context, albumName string, count int, tags string) ([]types.PullImage, error) {
 	// Get user ID first
 	userID, err := c.api.GetUserID(ctx)
 	if err != nil {
@@ -37,9 +37,43 @@ func (c *FlickrPullClient) PullImages(ctx context.Context, albumName string, cou
 	var photos []photosetPhoto
 	var isPhotostream bool
 	
-	// For Flickr, default to photostream instead of looking for an album
-	// Only use photosets if explicitly specified
-	if albumName != "" && albumName != "photostream" {
+	// If tags are specified, use search instead of album/photostream
+	if tags != "" {
+		// Parse comma-separated tags
+		tagList := strings.Split(tags, ",")
+		for i := range tagList {
+			tagList[i] = strings.TrimSpace(tagList[i])
+		}
+
+		// Use search API to find photos by tags
+		searchParams := PhotoSearchParams{
+			UserID:  userID,
+			Tags:    tagList,
+			PerPage: count,
+			Page:    1,
+		}
+
+		searchResp, err := c.api.PhotosSearch(ctx, searchParams)
+		if err != nil {
+			return nil, fmt.Errorf("failed to search photos by tags: %w", err)
+		}
+
+		// Convert search results to photosetPhoto format for consistency
+		photos = make([]photosetPhoto, len(searchResp.Photos))
+		for i, photo := range searchResp.Photos {
+			photos[i] = photosetPhoto{
+				ID:     photo.ID,
+				Title:  photo.Title,
+				Secret: photo.Secret,
+				Server: photo.Server,
+				Farm:   photo.Farm,
+			}
+		}
+
+		if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: Found %d photos with tags %v\n", len(photos), tagList)
+		}
+	} else if albumName != "" && albumName != "photostream" {
 		// Find the photoset by name
 		photosetID, err := c.findPhotosetByName(ctx, userID, albumName)
 		if err != nil {
