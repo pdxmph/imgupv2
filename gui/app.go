@@ -1560,6 +1560,18 @@ func (a *App) downloadPullThumbnails(photos []PullPhotoData) {
 func (a *App) PostPullSelection(request types.PullRequest) (*MultiPhotoUploadResult, error) {
 	fmt.Printf("DEBUG: PostPullSelection called with %d images, targets: %v\n", len(request.Images), request.Targets)
 	
+	// Debug: Check if we're using the right pull request
+	if a.currentPullRequest != nil && len(a.currentPullRequest.Images) > 0 {
+		fmt.Printf("DEBUG: currentPullRequest has %d images\n", len(a.currentPullRequest.Images))
+		fmt.Printf("DEBUG: First image from currentPullRequest - Large URL: %s\n", a.currentPullRequest.Images[0].Sizes.Large)
+	}
+	
+	// Debug: Check what's in the request parameter
+	if len(request.Images) > 0 {
+		fmt.Printf("DEBUG: Request parameter has %d images\n", len(request.Images))
+		fmt.Printf("DEBUG: First image from request - Large URL: %s\n", request.Images[0].Sizes.Large)
+	}
+	
 	// Validate we have targets
 	if len(request.Targets) == 0 {
 		return &MultiPhotoUploadResult{

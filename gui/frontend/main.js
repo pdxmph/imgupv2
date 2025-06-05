@@ -371,14 +371,19 @@ function initializePullMode(data) {
     console.log('Photos count:', data.photos ? data.photos.length : 0);
     
     // Convert pull photos to multi-photo format
-    const photos = data.photos.map((photo, index) => ({
-        ...photo,
-        index,
-        path: '', // No local path for pull photos
-        isFromPull: true,
-        isPullMode: true,
-        hasAltText: !!photo.alt
-    }));
+    const photos = data.photos.map((photo, index) => {
+        console.log(`DEBUG: Raw photo ${index} from backend:`, photo);
+        const converted = {
+            ...photo,
+            index,
+            path: '', // No local path for pull photos
+            isFromPull: true,
+            isPullMode: true,
+            hasAltText: !!photo.alt
+        };
+        console.log(`DEBUG: Converted photo ${index}:`, converted);
+        return converted;
+    });
     
     // Show pull mode indicator
     const titleBar = document.querySelector('.form-section h2') || document.querySelector('h2');
@@ -1017,15 +1022,19 @@ async function handleMultiPhotoUpload() {
                     album: window.pullModeData.album
                 },
                 post: uploadData.post,
-                images: window.multiPhotoData.map(photo => ({
-                    id: photo.id || '',
-                    title: photo.title || '',
-                    source_url: photo.remoteURL || '',
-                    sizes: photo.imageURLs || {},
-                    alt: photo.alt || '',
-                    description: photo.description || '',
-                    tags: photo.tags || []
-                })),
+                images: window.multiPhotoData.map((photo, idx) => {
+                    console.log(`DEBUG: Photo ${idx} imageUrls:`, photo.imageUrls);
+                    console.log(`DEBUG: Photo ${idx} full object:`, photo);
+                    return {
+                        id: photo.id || '',
+                        title: photo.title || '',
+                        source_url: photo.remoteURL || photo.remoteUrl || '',
+                        sizes: photo.imageUrls || {},  // Changed from imageURLs to imageUrls
+                        alt: photo.alt || '',
+                        description: photo.description || '',
+                        tags: photo.tags || []
+                    };
+                }),
                 targets: [],
                 visibility: uploadData.visibility,
                 format: uploadData.format

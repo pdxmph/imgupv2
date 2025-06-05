@@ -604,6 +604,16 @@ func launchGUIWithPullData(pullReq *types.PullRequest) error {
 		return fmt.Errorf("failed to serialize pull request: %w", err)
 	}
 	
+	// Debug: Show what we're sending
+	if os.Getenv("IMGUP_DEBUG") != "" {
+		fmt.Printf("DEBUG: Sending pull request JSON (%d bytes) to GUI\n", len(jsonData))
+		// Show a sample of the JSON to verify URLs are present
+		var debugReq types.PullRequest
+		if err := json.Unmarshal(jsonData, &debugReq); err == nil && len(debugReq.Images) > 0 {
+			fmt.Printf("DEBUG: First image sizes - Large: %s\n", debugReq.Images[0].Sizes.Large)
+		}
+	}
+	
 	// Find the GUI app
 	guiPath := findGUIApp()
 	if guiPath == "" {
