@@ -140,13 +140,14 @@ func (a *App) startup(ctx context.Context) {
 	
 	// Check if we have pull data to load
 	if a.pullDataPath != "" || a.pullDataJSON != "" {
+		fmt.Printf("DEBUG: Entering pull mode block - pullDataPath='%s', pullDataJSON length=%d\n", a.pullDataPath, len(a.pullDataJSON))
 		fmt.Printf("DEBUG: Loading pull data from: %s\n", a.pullDataPath)
 		
-		// Show window immediately but in pull mode
-		wailsRuntime.WindowShow(a.ctx)
-		
-		// Emit a pull mode indicator immediately
+		// Emit a pull mode indicator BEFORE showing window to prevent race condition
 		wailsRuntime.EventsEmit(a.ctx, "pull-mode-starting")
+		
+		// Show window after emitting pull mode event
+		wailsRuntime.WindowShow(a.ctx)
 		
 		go func() {
 			// Give frontend more time to initialize event listeners
@@ -187,7 +188,7 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	
-	fmt.Println("DEBUG: starting window show goroutine")
+	fmt.Println("DEBUG: NOT in pull mode - starting window show goroutine")
 	// Show the window initially if a photo is selected
 	go func() {
 		// Single quick check after brief delay for app initialization
@@ -248,7 +249,7 @@ func (a *App) ResizeWindowForMultiPhoto(photoCount int, showSocial bool) {
 // GetSelectedPhoto gets the currently selected photo from Finder/Photos
 func (a *App) GetSelectedPhoto() (*PhotoMetadata, error) {
 	// If we're in pull mode, don't try to get selected photos
-	if a.pullDataPath != "" {
+	if a.pullDataPath != "" || a.pullDataJSON != "" {
 		return nil, fmt.Errorf("pull mode active")
 	}
 	

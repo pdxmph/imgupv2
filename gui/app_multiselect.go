@@ -16,7 +16,7 @@ func (a *App) GetSelectedPhotos() ([]PhotoMetadata, error) {
 	fmt.Println("DEBUG: GetSelectedPhotos called")
 	
 	// If we're in pull mode, don't try to get selected photos
-	if a.pullDataPath != "" {
+	if a.pullDataPath != "" || a.pullDataJSON != "" {
 		fmt.Println("DEBUG: In pull mode, returning empty")
 		return nil, fmt.Errorf("pull mode active")
 	}
