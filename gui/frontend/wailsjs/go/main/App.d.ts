@@ -17,6 +17,8 @@ export function PostPullSelection(arg1:types.PullRequest):Promise<main.MultiPhot
 
 export function ResizeWindow(arg1:boolean):Promise<void>;
 
+export function ResizeWindowForMultiPhoto(arg1:number,arg2:boolean):Promise<void>;
+
 export function StartThumbnailGeneration(arg1:Array<main.PhotoMetadata>):Promise<void>;
 
 export function TestMultiSelect():Promise<string>;

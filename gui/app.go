@@ -144,8 +144,8 @@ func (a *App) startup(ctx context.Context) {
 		wailsRuntime.EventsEmit(a.ctx, "pull-mode-starting")
 		
 		go func() {
-			// Give frontend minimal time to initialize event listeners
-			time.Sleep(100 * time.Millisecond)
+			// Give frontend more time to initialize event listeners
+			time.Sleep(500 * time.Millisecond)
 			
 			// Read the pull data file
 			data, err := os.ReadFile(a.pullDataPath)
@@ -204,6 +204,29 @@ func (a *App) ResizeWindow(showMastodon bool) {
 	} else {
 		wailsRuntime.WindowSetSize(a.ctx, 900, 500)  // Standard height
 	}
+}
+
+// ResizeWindowForMultiPhoto resizes the window for multi-photo mode
+func (a *App) ResizeWindowForMultiPhoto(photoCount int, showSocial bool) {
+	// Base height for multi-photo mode
+	baseHeight := 650
+	
+	// Add extra height for social media fields
+	if showSocial {
+		baseHeight += 100
+	}
+	
+	// Add extra height if we have many photos (for better list visibility)
+	if photoCount > 3 {
+		baseHeight += 50
+	}
+	
+	// Cap maximum height
+	if baseHeight > 800 {
+		baseHeight = 800
+	}
+	
+	wailsRuntime.WindowSetSize(a.ctx, 900, baseHeight)
 }
 
 // GetSelectedPhoto gets the currently selected photo from Finder/Photos
@@ -1453,9 +1476,11 @@ func (a *App) HandlePullRequest(pullJSON string) error {
 	a.currentPullRequest = &pullReq
 	
 	// Download thumbnails in parallel
+	fmt.Printf("DEBUG: Starting thumbnail downloads for %d photos\n", len(photos))
 	go a.downloadPullThumbnails(photos)
 	
 	// Emit event to frontend with pull data
+	fmt.Printf("DEBUG: Emitting pull-mode-init event\n")
 	wailsRuntime.EventsEmit(a.ctx, "pull-mode-init", map[string]interface{}{
 		"photos":     photos,
 		"service":    pullReq.Source.Service,
@@ -1471,50 +1496,67 @@ func (a *App) HandlePullRequest(pullJSON string) error {
 
 // downloadPullThumbnails downloads thumbnails for pull photos in parallel
 func (a *App) downloadPullThumbnails(photos []PullPhotoData) {
+	fmt.Printf("DEBUG: downloadPullThumbnails called with %d photos\n", len(photos))
 	for i, photo := range photos {
 		go func(index int, p PullPhotoData) {
+			fmt.Printf("DEBUG: Processing thumbnail %d for '%s', URL: %s\n", index, p.Title, p.ThumbnailURL)
 			if p.ThumbnailURL == "" {
+				fmt.Printf("DEBUG: Skipping thumbnail %d - empty URL\n", index)
 				return
 			}
 			
 			// Download thumbnail
+			fmt.Printf("DEBUG: Starting HTTP GET for thumbnail %d\n", index)
 			resp, err := http.Get(p.ThumbnailURL)
 			if err != nil {
-				fmt.Printf("Failed to download thumbnail for %s: %v\n", p.Title, err)
+				fmt.Printf("ERROR: Failed to download thumbnail for %s: %v\n", p.Title, err)
 				return
 			}
 			defer resp.Body.Close()
 			
 			if resp.StatusCode != http.StatusOK {
-				fmt.Printf("Failed to download thumbnail for %s: status %d\n", p.Title, resp.StatusCode)
+				fmt.Printf("ERROR: Failed to download thumbnail for %s: status %d\n", p.Title, resp.StatusCode)
 				return
 			}
 			
 			// Read thumbnail data
 			thumbData, err := io.ReadAll(resp.Body)
 			if err != nil {
-				fmt.Printf("Failed to read thumbnail for %s: %v\n", p.Title, err)
+				fmt.Printf("ERROR: Failed to read thumbnail for %s: %v\n", p.Title, err)
 				return
 			}
+			fmt.Printf("DEBUG: Downloaded %d bytes for thumbnail %d\n", len(thumbData), index)
 			
 			// Convert to base64
 			base64Thumb := base64.StdEncoding.EncodeToString(thumbData)
 			
 			// Emit thumbnail ready event
+			fmt.Printf("DEBUG: Emitting pull-thumbnail-ready event for index %d\n", index)
 			wailsRuntime.EventsEmit(a.ctx, "pull-thumbnail-ready", map[string]interface{}{
 				"index":     index,
 				"thumbnail": "data:image/jpeg;base64," + base64Thumb,
 			})
+			fmt.Printf("DEBUG: Successfully emitted pull-thumbnail-ready for index %d\n", index)
 		}(i, photo)
 	}
 }
 
 // PostPullSelection handles the social media posting for selected pull images
 func (a *App) PostPullSelection(request types.PullRequest) (*MultiPhotoUploadResult, error) {
-	// This will be implemented to handle the actual posting
-	// For now, return a placeholder
+	fmt.Printf("DEBUG: PostPullSelection called with %d images, targets: %v\n", len(request.Images), request.Targets)
+	
+	// Validate we have targets
+	if len(request.Targets) == 0 {
+		return &MultiPhotoUploadResult{
+			Success: false,
+			Error:   "No social media targets selected",
+		}, nil
+	}
+	
+	// For now, return a more helpful error message
+	// The pull command needs to be enhanced to support posting pre-selected images
 	return &MultiPhotoUploadResult{
 		Success: false,
-		Error:   "Pull posting not yet implemented",
+		Error:   "Social posting from pull mode is not yet implemented. Please use the command line pull command with --mastodon or --bluesky flags.",
 	}, nil
 }

@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Set up event listeners FIRST before any backend calls
     setupEventListeners();
+    console.log('Event listeners are now ready');
     
     // Set up tag autocomplete
     setupTagAutocomplete();
@@ -214,7 +215,15 @@ function setupEventListeners() {
             }
             // Resize window to accommodate extra fields
             try {
-                await window.go.main.App.ResizeWindow(true);
+                if (window.multiPhotoData) {
+                    // Multi-photo mode
+                    const photoCount = window.multiPhotoData.length;
+                    const hasSocial = true;
+                    await window.go.main.App.ResizeWindowForMultiPhoto(photoCount, hasSocial);
+                } else {
+                    // Single photo mode
+                    await window.go.main.App.ResizeWindow(true);
+                }
             } catch (err) {
                 console.error('Failed to resize window:', err);
             }
@@ -223,7 +232,15 @@ function setupEventListeners() {
             // Resize window back if no services are checked
             if (!blueskyCheckbox.checked) {
                 try {
-                    await window.go.main.App.ResizeWindow(false);
+                    if (window.multiPhotoData) {
+                        // Multi-photo mode
+                        const photoCount = window.multiPhotoData.length;
+                        const hasSocial = false;
+                        await window.go.main.App.ResizeWindowForMultiPhoto(photoCount, hasSocial);
+                    } else {
+                        // Single photo mode
+                        await window.go.main.App.ResizeWindow(false);
+                    }
                 } catch (err) {
                     console.error('Failed to resize window:', err);
                 }
@@ -245,7 +262,15 @@ function setupEventListeners() {
             }
             // Resize window to accommodate extra fields
             try {
-                await window.go.main.App.ResizeWindow(true);
+                if (window.multiPhotoData) {
+                    // Multi-photo mode
+                    const photoCount = window.multiPhotoData.length;
+                    const hasSocial = true;
+                    await window.go.main.App.ResizeWindowForMultiPhoto(photoCount, hasSocial);
+                } else {
+                    // Single photo mode
+                    await window.go.main.App.ResizeWindow(true);
+                }
             } catch (err) {
                 console.error('Failed to resize window:', err);
             }
@@ -254,7 +279,15 @@ function setupEventListeners() {
             // Resize window back if no services are checked
             if (!mastodonCheckbox.checked) {
                 try {
-                    await window.go.main.App.ResizeWindow(false);
+                    if (window.multiPhotoData) {
+                        // Multi-photo mode
+                        const photoCount = window.multiPhotoData.length;
+                        const hasSocial = false;
+                        await window.go.main.App.ResizeWindowForMultiPhoto(photoCount, hasSocial);
+                    } else {
+                        // Single photo mode
+                        await window.go.main.App.ResizeWindow(false);
+                    }
                 } catch (err) {
                     console.error('Failed to resize window:', err);
                 }
@@ -280,10 +313,17 @@ function setupEventListeners() {
     // Listen for pull mode initialization
     window.runtime.EventsOn('pull-mode-init', (data) => {
         console.log('Pull mode initialized:', data);
+        console.log('Number of photos received:', data.photos ? data.photos.length : 0);
         
         // Store pull context globally
         window.pullModeData = data;
         window.isPullMode = true;
+        
+        // Hide loading overlay first
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay) {
+            overlay.classList.add('hidden');
+        }
         
         // Initialize pull mode UI
         initializePullMode(data);
@@ -297,6 +337,11 @@ function setupEventListeners() {
             // Update the thumbnail in the photos array
             window.pullModeData.photos[data.index].thumbnail = data.thumbnail;
             
+            // Also update multiPhotoData if it exists
+            if (window.multiPhotoData && window.multiPhotoData[data.index]) {
+                window.multiPhotoData[data.index].thumbnail = data.thumbnail;
+            }
+            
             // Update UI if this photo is currently displayed
             if (window.multiPhotoData && window.currentPhotoIndex === data.index) {
                 const preview = document.getElementById('preview');
@@ -306,9 +351,13 @@ function setupEventListeners() {
             }
             
             // Update thumbnail in photo list if visible
-            const thumbElement = document.querySelector(`.photo-item[data-index="${data.index}"] img`);
-            if (thumbElement) {
-                thumbElement.src = data.thumbnail;
+            const photoItem = document.querySelector(`.photo-item[data-index="${data.index}"]`);
+            if (photoItem) {
+                const thumbnailContainer = photoItem.querySelector('.thumbnail');
+                if (thumbnailContainer) {
+                    // Replace the entire thumbnail content
+                    thumbnailContainer.innerHTML = `<img src="${data.thumbnail}" alt="${window.pullModeData.photos[data.index].title || 'Photo'}">`;
+                }
             }
         }
     });
@@ -318,7 +367,8 @@ function setupEventListeners() {
 
 // Initialize UI for pull mode
 function initializePullMode(data) {
-    console.log('Initializing pull mode with data:', data);
+    console.log('initializePullMode called with data:', data);
+    console.log('Photos count:', data.photos ? data.photos.length : 0);
     
     // Convert pull photos to multi-photo format
     const photos = data.photos.map((photo, index) => ({
@@ -337,6 +387,7 @@ function initializePullMode(data) {
     }
     
     // Update the multi-photo UI for pull mode
+    console.log('About to call showPullPhotoUI with', photos.length, 'photos');
     showPullPhotoUI(photos);
     
     // Pre-populate social media settings
@@ -376,6 +427,8 @@ function initializePullMode(data) {
 
 // Show UI for pull photo selection (adapted from showMultiPhotoUI)
 function showPullPhotoUI(photos) {
+    console.log('showPullPhotoUI called with', photos.length, 'photos');
+    
     // Store photos for later use
     window.multiPhotoData = photos;
     window.currentPhotoIndex = 0;
@@ -421,6 +474,15 @@ function showPullPhotoUI(photos) {
     // Change cancel button behavior for pull mode
     const cancelBtn = document.getElementById('cancel-btn');
     cancelBtn.textContent = 'Cancel';
+    
+    // Resize window for multi-photo mode
+    try {
+        const hasSocial = document.getElementById('mastodon-enabled').checked || 
+                         document.getElementById('bluesky-enabled').checked;
+        window.go.main.App.ResizeWindowForMultiPhoto(photos.length, hasSocial);
+    } catch (err) {
+        console.error('Failed to resize window for multi-photo mode:', err);
+    }
     
     // Load first photo's details
     loadPhotoDetails(0);
@@ -912,8 +974,12 @@ async function handleMultiPhotoUpload() {
     console.log('DEBUG: Social post data:', socialPost);
     console.log('DEBUG: Mastodon text field value:', form['mastodon-text'].value);
     
-    // Show progress
-    showProgress(`Uploading ${window.multiPhotoData.length} photos...`);
+    // Show progress - different message for pull mode
+    if (window.isPullMode) {
+        showProgress(`Posting ${window.multiPhotoData.length} photos...`);
+    } else {
+        showProgress(`Uploading ${window.multiPhotoData.length} photos...`);
+    }
     form.classList.add('disabled');
     
     try {
@@ -941,8 +1007,44 @@ async function handleMultiPhotoUpload() {
         console.log('DEBUG: uploadData.mastodon =', uploadData.mastodon);
         console.log('DEBUG: uploadData.post =', uploadData.post);
         
-        // Call backend method
-        const result = await window.go.main.App.UploadMultiplePhotos(uploadData);
+        // Call backend method - different for pull mode vs upload mode
+        let result;
+        if (window.isPullMode && window.pullModeData) {
+            // For pull mode, we need to construct a pull request with the selected images
+            const pullRequest = {
+                source: {
+                    service: window.pullModeData.service,
+                    album: window.pullModeData.album
+                },
+                post: uploadData.post,
+                images: window.multiPhotoData.map(photo => ({
+                    id: photo.id || '',
+                    title: photo.title || '',
+                    source_url: photo.remoteURL || '',
+                    sizes: photo.imageURLs || {},
+                    alt: photo.alt || '',
+                    description: photo.description || '',
+                    tags: photo.tags || []
+                })),
+                targets: [],
+                visibility: uploadData.visibility,
+                format: uploadData.format
+            };
+            
+            // Add targets based on enabled social media
+            if (uploadData.mastodon) {
+                pullRequest.targets.push('mastodon');
+            }
+            if (uploadData.bluesky) {
+                pullRequest.targets.push('bluesky');
+            }
+            
+            console.log('DEBUG: Calling PostPullSelection with:', pullRequest);
+            result = await window.go.main.App.PostPullSelection(pullRequest);
+        } else {
+            // Normal upload mode
+            result = await window.go.main.App.UploadMultiplePhotos(uploadData);
+        }
         
         console.log('DEBUG: Upload result:', result);
         
@@ -1198,6 +1300,15 @@ function showMultiPhotoUI(photos) {
     // Update upload button
     const uploadBtn = document.getElementById('upload-btn');
     uploadBtn.textContent = `Upload ${photos.length} Photos`;
+    
+    // Resize window for multi-photo mode
+    try {
+        const hasSocial = document.getElementById('mastodon-enabled').checked || 
+                         document.getElementById('bluesky-enabled').checked;
+        window.go.main.App.ResizeWindowForMultiPhoto(photos.length, hasSocial);
+    } catch (err) {
+        console.error('Failed to resize window for multi-photo mode:', err);
+    }
     
     // Load first photo's details
     loadPhotoDetails(0);
