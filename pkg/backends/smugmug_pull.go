@@ -28,7 +28,7 @@ func NewSmugMugPullClient(cfg *config.SmugMugConfig) *SmugMugPullClient {
 }
 
 // PullImages fetches recent images from SmugMug
-func (c *SmugMugPullClient) PullImages(ctx context.Context, albumName string, count int) ([]types.PullImage, error) {
+func (c *SmugMugPullClient) PullImages(ctx context.Context, albumName string, count int, tags string) ([]types.PullImage, error) {
 	// If no album name is provided, use the configured album
 	if albumName == "" {
 		if c.cfg.PullAlbum != "" {
@@ -58,6 +58,42 @@ func (c *SmugMugPullClient) PullImages(ctx context.Context, albumName string, co
 
 	if os.Getenv("IMGUP_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "DEBUG: Found %d images in album\n", len(images))
+	}
+
+	// Filter by tags if specified
+	if tags != "" {
+		// Parse comma-separated tags
+		tagList := strings.Split(tags, ",")
+		for i := range tagList {
+			tagList[i] = strings.TrimSpace(tagList[i])
+		}
+
+		// Create a map for faster lookup
+		tagMap := make(map[string]bool)
+		for _, tag := range tagList {
+			tagMap[strings.ToLower(tag)] = true
+		}
+
+		// Filter images that have any of the requested tags
+		var filteredImages []AlbumImageDetail
+		for _, img := range images {
+			if img.Keywords != "" {
+				// Parse image keywords
+				imgTags := strings.Split(img.Keywords, ";")
+				for _, imgTag := range imgTags {
+					imgTag = strings.TrimSpace(imgTag)
+					if tagMap[strings.ToLower(imgTag)] {
+						filteredImages = append(filteredImages, img)
+						break // Found a match, no need to check other tags
+					}
+				}
+			}
+		}
+
+		images = filteredImages
+		if os.Getenv("IMGUP_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: After tag filter: %d images match tags %v\n", len(images), tagList)
+		}
 	}
 
 	// Limit to requested count

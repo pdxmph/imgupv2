@@ -36,6 +36,7 @@ var (
 	pullBluesky  bool
 	pullVisibility string
 	pullPost    string
+	pullTags    string
 )
 
 // createPullCommand creates the pull command
@@ -62,6 +63,7 @@ and presents them for selection.`,
 	pullCmd.Flags().BoolVar(&pullBluesky, "bluesky", false, "Post to Bluesky")
 	pullCmd.Flags().StringVar(&pullVisibility, "visibility", "public", "Mastodon visibility: public, unlisted, private (followers), direct")
 	pullCmd.Flags().StringVar(&pullPost, "post", "", "Social media post text (skips editor if provided)")
+	pullCmd.Flags().StringVar(&pullTags, "tags", "", "Filter by tags (comma-separated)")
 
 	return pullCmd
 }
@@ -137,7 +139,7 @@ func pullCommand(cmd *cobra.Command, args []string) {
 	}
 
 	// Fetch images from service
-	images, err := fetchImages(service, album, count)
+	images, err := fetchImages(service, album, count, pullTags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to fetch images: %v\n", err)
 		os.Exit(1)
@@ -184,7 +186,7 @@ func pullCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
-func fetchImages(service, album string, count int) ([]types.PullImage, error) {
+func fetchImages(service, album string, count int, tags string) ([]types.PullImage, error) {
 	ctx := context.Background()
 	
 	// Load config to get credentials
@@ -201,7 +203,7 @@ func fetchImages(service, album string, count int) ([]types.PullImage, error) {
 		}
 
 		client := backends.NewSmugMugPullClient(&cfg.SmugMug)
-		return client.PullImages(ctx, album, count)
+		return client.PullImages(ctx, album, count, tags)
 
 	case "flickr":
 		// Check if Flickr is configured
@@ -210,7 +212,7 @@ func fetchImages(service, album string, count int) ([]types.PullImage, error) {
 		}
 		
 		client := backends.NewFlickrPullClient(&cfg.Flickr)
-		return client.PullImages(ctx, album, count)
+		return client.PullImages(ctx, album, count, tags)
 
 	default:
 		return nil, fmt.Errorf("unsupported service: %s", service)
