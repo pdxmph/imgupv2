@@ -89,8 +89,6 @@ func (c *Client) PostStatus(text string, mediaIDs []string, visibility string, t
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
 	
-	fmt.Printf("Posted to Mastodon: %s\n", statusResp.URL)
-	
 	return nil
 }
 
@@ -217,19 +215,12 @@ func (c *Client) UploadMediaFromURL(imageURL string, altText string) (string, er
 	// Detect MIME type from actual content
 	detectedType := http.DetectContentType(imageData)
 	
-	// Debug logging
-	fmt.Printf("DEBUG: Downloaded from %s\n", imageURL)
-	fmt.Printf("DEBUG: Content-Type header: %s\n", resp.Header.Get("Content-Type"))
-	fmt.Printf("DEBUG: Detected MIME type: %s\n", detectedType)
-	fmt.Printf("DEBUG: Image size: %d bytes\n", len(imageData))
-	
 	// Check if we got HTML instead of an image
 	if strings.HasPrefix(detectedType, "text/") {
 		preview := string(imageData)
 		if len(preview) > 100 {
 			preview = preview[:100]
 		}
-		fmt.Printf("DEBUG: Got text response instead of image. Content: %s\n", preview)
 		return "", fmt.Errorf("received HTML/text response instead of image from URL: %s", imageURL)
 	}
 	

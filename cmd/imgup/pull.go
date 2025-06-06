@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/pdxmph/imgupv2/pkg/backends"
@@ -66,6 +67,23 @@ and presents them for selection.`,
 	pullCmd.Flags().StringVar(&pullTags, "tags", "", "Filter by tags (comma-separated)")
 
 	return pullCmd
+}
+
+// showSpinner displays a simple spinner while waiting for API calls
+func showSpinner(done chan bool) {
+	chars := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	i := 0
+	for {
+		select {
+		case <-done:
+			fmt.Print("\r") // Clear the line
+			return
+		default:
+			fmt.Printf("\r%s Fetching images... ", chars[i%len(chars)])
+			i++
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 }
 
 func pullCommand(cmd *cobra.Command, args []string) {
@@ -130,16 +148,31 @@ func pullCommand(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	// Fetch images from service with spinner
+	var images []types.PullImage
+	
 	if !pullJSON {
+		// Start spinner for interactive mode
+		done := make(chan bool)
+		go showSpinner(done)
+		
+		// Fetch images
+		images, err = fetchImages(service, album, count, pullTags)
+		
+		// Stop spinner
+		done <- true
+		
+		// Print the fetch info after spinner clears
 		if service == "flickr" && album == "" {
-			fmt.Printf("Fetching from %s photostream...\n\n", strings.Title(service))
+			fmt.Printf("Fetched from %s photostream\n\n", strings.Title(service))
 		} else {
-			fmt.Printf("Fetching from %s (album: %s)...\n\n", strings.Title(service), album)
+			fmt.Printf("Fetched from %s (album: %s)\n\n", strings.Title(service), album)
 		}
+	} else {
+		// No spinner for JSON output
+		images, err = fetchImages(service, album, count, pullTags)
 	}
-
-	// Fetch images from service
-	images, err := fetchImages(service, album, count, pullTags)
+	
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to fetch images: %v\n", err)
 		os.Exit(1)

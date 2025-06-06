@@ -353,13 +353,7 @@ func (c *Client) PostStatus(text string, mediaBlobs []BlobResponse, altTexts []s
 	
 	// Convert AT URI to web URL
 	// at://did:plc:xxx/app.bsky.feed.post/yyy -> https://bsky.app/profile/handle/post/yyy
-	parts := strings.Split(postResp.URI, "/")
-	if len(parts) >= 5 {
-		postID := parts[len(parts)-1]
-		webURL := fmt.Sprintf("https://bsky.app/profile/%s/post/%s", c.DID, postID)
-		fmt.Printf("Posted to Bluesky: %s\n", webURL)
-	}
-	
+	// Successfully posted
 	return nil
 }
 
