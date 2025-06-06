@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="v0.10.0"
+VERSION="v0.11.1"
 RELEASE_NAME="imgupv2-${VERSION}-macOS"
 RELEASE_DIR="dist/${RELEASE_NAME}"
 
