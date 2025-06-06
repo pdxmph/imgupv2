@@ -1,6 +1,6 @@
 cask "imgupv2" do
-  version "0.10.0"
-  sha256 "fa6c5221197338e8cf8029fab9432530250cf72a25b3003ba65bbe283d11ff18"
+  version "0.11.0"
+  sha256 "d4e3f2962d2d5f5489286e03bbaf1b254995ea00a78915ded3f39a3e7a122629"
 
   url "https://github.com/pdxmph/imgupv2/releases/download/v#{version}/imgupv2-v#{version}-macOS.tar.gz"
   name "imgupv2"
